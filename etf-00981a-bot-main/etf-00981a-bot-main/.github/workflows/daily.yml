@@ -1,0 +1,27 @@
+name: Daily Push
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 10 * * *"  # 台北 18:00 = UTC 10:00
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install requests pandas lxml html5lib
+      - run: python bot_push.py
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}

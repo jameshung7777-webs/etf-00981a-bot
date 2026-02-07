@@ -1,0 +1,49 @@
+name: 00981A ETF 每日自動抓取
+
+on:
+  schedule:
+    # 每天台灣時間 18:00 執行
+    # 台灣時間 18:00 = UTC 10:00（UTC+8）
+    # cron 格式：分 時 日 月 星期
+    - cron: '0 10 * * *'
+  workflow_dispatch:  # 允許手動觸發
+
+jobs:
+  fetch-and-send:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 檢出程式碼
+      uses: actions/checkout@v3
+    
+    - name: 設定 Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: 安裝依賴
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        # 安裝 Chrome 和 ChromeDriver（用於 Selenium）
+        sudo apt-get update
+        sudo apt-get install -y chromium-browser chromium-chromedriver
+    
+    - name: 執行抓取和發送
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
+        CHROME_BIN: /usr/bin/chromium-browser
+        CHROMEDRIVER_PATH: /usr/bin/chromedriver
+      run: |
+        python main.py --now
+    
+    - name: 上傳數據檔案（如果有的話）
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: holdings-data
+        path: |
+          holdings_data*.json
+        retention-days: 30

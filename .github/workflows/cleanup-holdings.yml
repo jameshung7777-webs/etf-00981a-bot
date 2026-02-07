@@ -1,0 +1,34 @@
+name: 清理舊的 holdings 檔案
+
+on:
+  schedule:
+    # 每週日 03:00 台灣時間 (UTC 19:00 週六)
+    - cron: '0 19 * * 6'
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: 檢出程式碼
+      uses: actions/checkout@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 設定 Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: 清理 7 天前的 holdings 檔案
+      run: |
+        python cleanup_old_holdings.py --days 7
+
+    - name: 提交變更
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add -A
+        git diff --staged --quiet || (git commit -m "chore: 清理 7 天前的 holdings 檔案" && git push)
