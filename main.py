@@ -108,7 +108,7 @@ def fetch_data_only():
         
         return False
     
-    _, _, save_fn = _get_scraper_modules()
+    _, _, save_fn, _, _, _, _ = _get_scraper_modules()
     save_fn(current_holdings, today_str)
     print(f"[OK] 已保存 {today_str} 的持股數據（共 {len(current_holdings)} 檔）")
     print("="*60 + "\n")
