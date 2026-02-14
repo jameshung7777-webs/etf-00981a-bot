@@ -12,6 +12,10 @@ echo 3. 比較昨日變化
 echo 4. 發送到 Telegram
 echo.
 echo ========================================
+echo.
+echo 檢查依賴...
+pip install -r requirements.txt -q
+echo.
 
 python main.py --now
 

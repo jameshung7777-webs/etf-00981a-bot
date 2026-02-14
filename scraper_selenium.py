@@ -12,8 +12,8 @@ from datetime import datetime, timedelta
 import re
 import requests
 
-# Selenium 啟動逾時（秒），避免卡住
-SELENIUM_DRIVER_TIMEOUT = 20
+# Selenium 啟動逾時（秒），避免卡住（GitHub Actions 下載 ChromeDriver 較慢）
+SELENIUM_DRIVER_TIMEOUT = 60
 
 # 排除明顯非股票名稱（CSS、HTML、版權等），與 scraper_requests 一致
 def _is_garbage_name(name):

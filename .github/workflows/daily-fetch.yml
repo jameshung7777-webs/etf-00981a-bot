@@ -44,25 +44,23 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        # 安裝 Chromium 和 ChromeDriver
-        sudo apt-get update
-        sudo apt-get install -y chromium-browser chromium-chromedriver 2>/dev/null || \
-        sudo apt-get install -y chromium chromium-driver 2>/dev/null || true
-        (which chromium-browser || which chromium) && echo "Chromium OK" || echo "Chromium not found"
+    
+    - name: 安裝 Chrome（GitHub Actions 專用）
+      id: setup-chrome
+      uses: browser-actions/setup-chrome@v2
+      with:
+        chrome-version: stable
+        install-chromedriver: true
+        install-dependencies: true
     
     - name: 執行抓取和發送
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
-        CHROME_BIN: /usr/bin/chromium-browser
-        CHROMEDRIVER_PATH: /usr/bin/chromedriver
-      run: |
-        if [ -f /usr/bin/chromium ]; then
-          export CHROME_BIN=/usr/bin/chromium
-          export CHROMEDRIVER_PATH=$(which chromedriver || which chromium-driver || echo /usr/bin/chromium-driver)
-        fi
-        python main.py --now
+        CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+        CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
+      run: python main.py --now
     
     - name: 提交 holdings 數據（每日儲存到 repo）
       run: |
