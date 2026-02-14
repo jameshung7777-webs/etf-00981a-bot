@@ -64,16 +64,17 @@ jobs:
         fi
         python main.py --now
     
-    - name: 提交 holdings 數據（供明日比較）
+    - name: 提交 holdings 數據（每日儲存到 repo）
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add holdings_data*.json 2>/dev/null || true
-        if git diff --staged --quiet; then
-          echo "無新數據需提交"
-        else
-          git commit -m "chore: 更新 holdings 數據"
+        git add holdings_data.json holdings_data_*.json 2>/dev/null || true
+        if ! git diff --staged --quiet 2>/dev/null; then
+          git commit -m "chore: 儲存每日持股數據 $(date +%Y-%m-%d)"
           git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:${{ github.ref_name }}
+          echo "已提交並推送持股 JSON 檔"
+        else
+          echo "無新數據需提交"
         fi
       continue-on-error: true
     

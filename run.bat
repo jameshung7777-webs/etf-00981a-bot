@@ -16,7 +16,7 @@ if "%choice%"=="1" (
     python main.py --now
 ) else (
     echo.
-    echo 啟動排程器（每天6點自動執行）...
+    echo 啟動排程器（每天18:00抓取、18:30發送）...
     echo 按 Ctrl+C 可停止程式
     python main.py
 )

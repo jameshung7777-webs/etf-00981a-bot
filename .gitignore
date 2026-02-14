@@ -23,7 +23,8 @@ wheels/
 .installed.cfg
 *.egg
 
-# 數據檔案（可選，如果不想上傳到 GitHub）
+# 數據檔案：holdings_data*.json 需保留可提交，供 GitHub 每日儲存
+# 勿取消註解以下兩行，否則 GitHub Actions 無法儲存每日持股
 # holdings_data*.json
 # holdings_data.json
 
