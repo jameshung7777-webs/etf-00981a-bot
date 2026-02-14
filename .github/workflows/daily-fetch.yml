@@ -11,23 +11,44 @@ on:
 jobs:
   fetch-and-send:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     
     steps:
     - name: 檢出程式碼
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: 設定 Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
     
+    - name: 檢查 Secrets
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      run: |
+        if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+          echo "::warning::TELEGRAM_BOT_TOKEN 未設定，將使用 config 預設值"
+          echo "建議到 Settings > Secrets and variables > Actions 新增 TELEGRAM_BOT_TOKEN"
+        else
+          echo "TELEGRAM_BOT_TOKEN 已設定"
+        fi
+        if [ -z "${{ secrets.TELEGRAM_CHAT_ID }}" ] && [ -z "${{ secrets.TELEGRAM_CHAT_IDS }}" ]; then
+          echo "::warning::TELEGRAM_CHAT_ID 與 TELEGRAM_CHAT_IDS 皆未設定"
+          echo "將嘗試從 getUpdates 自動取得，或需在 config 設定 TELEGRAM_CHAT_IDS"
+        fi
+    
     - name: 安裝依賴
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        # 安裝 Chrome 和 ChromeDriver（用於 Selenium）
+        # 安裝 Chromium 和 ChromeDriver
         sudo apt-get update
-        sudo apt-get install -y chromium-browser chromium-chromedriver
+        sudo apt-get install -y chromium-browser chromium-chromedriver 2>/dev/null || \
+        sudo apt-get install -y chromium chromium-driver 2>/dev/null || true
+        (which chromium-browser || which chromium) && echo "Chromium OK" || echo "Chromium not found"
     
     - name: 執行抓取和發送
       env:
@@ -37,10 +58,27 @@ jobs:
         CHROME_BIN: /usr/bin/chromium-browser
         CHROMEDRIVER_PATH: /usr/bin/chromedriver
       run: |
+        if [ -f /usr/bin/chromium ]; then
+          export CHROME_BIN=/usr/bin/chromium
+          export CHROMEDRIVER_PATH=$(which chromedriver || which chromium-driver || echo /usr/bin/chromium-driver)
+        fi
         python main.py --now
     
+    - name: 提交 holdings 數據（供明日比較）
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add holdings_data*.json 2>/dev/null || true
+        if git diff --staged --quiet; then
+          echo "無新數據需提交"
+        else
+          git commit -m "chore: 更新 holdings 數據"
+          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:${{ github.ref_name }}
+        fi
+      continue-on-error: true
+    
     - name: 上傳數據檔案（如果有的話）
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: holdings-data

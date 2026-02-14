@@ -521,6 +521,9 @@ def save_holdings(holdings, date_str, data_file=None):
     """保存當前持股數據。會寫入：帶日期時間的檔案 + holdings_data.json（供下次比較用）"""
     from datetime import datetime
     now = datetime.now()
+    parts = str(date_str or "").split("/")
+    if not parts or len(parts[0]) != 4:
+        date_str = f"{now.year}/{now.month}/{now.day}"
     data = {
         'date': date_str,
         'holdings': holdings

@@ -7,8 +7,9 @@ import os
 import json
 
 # Telegram Bot Token
-# 優先使用環境變數（GitHub Actions），否則使用預設值
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8118096050:AAFbIs3h1FmbqI4bgCkOCV1Ndtl9kQ7kYzo")
+# 優先使用環境變數（GitHub Actions），空字串時使用預設值
+_t = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_BOT_TOKEN = (_t or "").strip() or "8118096050:AAFbIs3h1FmbqI4bgCkOCV1Ndtl9kQ7kYzo"
 
 # Telegram Chat ID（單一，相容舊版）
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", None)

@@ -13,7 +13,7 @@ jobs:
       contents: write
     steps:
     - name: 檢出程式碼
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -27,8 +27,15 @@ jobs:
         python cleanup_old_holdings.py --days 7
 
     - name: 提交變更
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git add -A
-        git diff --staged --quiet || (git commit -m "chore: 清理 7 天前的 holdings 檔案" && git push)
+        if git diff --staged --quiet; then
+          echo "無需提交的變更"
+        else
+          git commit -m "chore: 清理 7 天前的 holdings 檔案"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:${GITHUB_REF#refs/heads/}
+        fi

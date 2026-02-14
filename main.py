@@ -55,37 +55,45 @@ def send_to_all_chats(msg_today, report_compare, bot_token, chat_ids, send_to_te
             all_ok = False
     return all_ok
 
+def _date_str(dt):
+    """統一日期格式：YYYY/M/D"""
+    return f"{dt.year}/{dt.month}/{dt.day}"
+
 def fetch_data_only():
     """18:00 執行：只抓取數據並儲存，不發送訊息"""
     today = datetime.now()
-    today_str = f"{today.month}/{today.day}"
+    today_str = _date_str(today)
     print("="*60)
     print("[18:00] 00981A 抓取持股數據")
     print("="*60)
     print(f"執行時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     
-    fetch_fn, load_prev, save_fn = None, None, None
     current_holdings = None
     
+    # 先試 requests，失敗再試 Selenium
     try:
-        fetch_fn, load_prev, save_fn, _, _, _, _ = _get_scraper_modules()
-        if fetch_fn.__name__ == "fetch_holdings_requests":
-            print(f"正在抓取 {today_str} 的持股數據（使用 requests）...")
-            current_holdings = fetch_fn()
-        else:
+        from scraper_requests import fetch_holdings_requests
+        print(f"正在抓取 {today_str} 的持股數據（使用 requests）...")
+        current_holdings = fetch_holdings_requests()
+    except Exception as e:
+        print(f"requests 失敗: {e}")
+    
+    if not current_holdings:
+        try:
+            from scraper_selenium import fetch_holdings_selenium
             print(f"正在抓取 {today_str} 的持股數據（使用 Selenium）...")
             _r = [None]
             def _run():
                 try:
-                    _r[0] = fetch_fn()
-                except Exception as e:
-                    print(f"Selenium 執行錯誤: {e}")
+                    _r[0] = fetch_holdings_selenium()
+                except Exception as ex:
+                    print(f"Selenium 執行錯誤: {ex}")
             t = threading.Thread(target=_run, daemon=True)
             t.start()
             t.join(timeout=SELENIUM_TIMEOUT)
             current_holdings = _r[0]
-    except Exception as e:
-        print(f"抓取失敗: {e}")
+        except Exception as e:
+            print(f"Selenium 失敗: {e}")
     
     if not current_holdings:
         print("[FAIL] 無法抓取持股數據")
@@ -100,6 +108,7 @@ def fetch_data_only():
         
         return
     
+    _, _, save_fn = _get_scraper_modules()
     save_fn(current_holdings, today_str)
     print(f"[OK] 已保存 {today_str} 的持股數據（共 {len(current_holdings)} 檔）")
     print("="*60 + "\n")
@@ -108,8 +117,8 @@ def send_messages_only():
     """18:30 執行：載入已儲存數據，比較變化，發送到所有聊天室和群組"""
     today = datetime.now()
     yesterday = today - timedelta(days=1)
-    today_str = f"{today.month}/{today.day}"
-    yesterday_str = f"{yesterday.month}/{yesterday.day}"
+    today_str = _date_str(today)
+    yesterday_str = _date_str(yesterday)
     
     print("="*60)
     print("[18:30] 00981A 發送持股報告")
