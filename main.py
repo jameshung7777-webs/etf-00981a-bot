@@ -60,7 +60,7 @@ def _date_str(dt):
     return f"{dt.year}/{dt.month}/{dt.day}"
 
 def fetch_data_only():
-    """18:00 執行：只抓取數據並儲存，不發送訊息"""
+    """18:00 執行：只抓取數據並儲存，不發送訊息。成功回傳 True，失敗回傳 False。"""
     today = datetime.now()
     today_str = _date_str(today)
     print("="*60)
@@ -106,12 +106,13 @@ def fetch_data_only():
         print("3. 檢查網絡連接")
         print("4. 如果 Selenium 無法使用，腳本會自動嘗試使用 requests 版本")
         
-        return
+        return False
     
     _, _, save_fn = _get_scraper_modules()
     save_fn(current_holdings, today_str)
     print(f"[OK] 已保存 {today_str} 的持股數據（共 {len(current_holdings)} 檔）")
     print("="*60 + "\n")
+    return True
 
 def send_messages_only():
     """18:30 執行：載入已儲存數據，比較變化，發送到所有聊天室和群組"""
@@ -167,8 +168,11 @@ def send_messages_only():
 
 def fetch_and_send():
     """一次執行：抓取 + 儲存 + 發送（用於 --now 或手動測試）"""
-    fetch_data_only()
-    send_messages_only()
+    ok = fetch_data_only()
+    if ok:
+        send_messages_only()
+    else:
+        print("[i] 抓取失敗，跳過發送")
 
 def run_scheduler():
     """執行排程器：18:00 抓資料，18:30 發訊息到所有聊天室和群組"""
@@ -196,7 +200,7 @@ def main():
     
     parser = argparse.ArgumentParser(description='00981A ETF 持股變化追蹤')
     parser.add_argument('--now', action='store_true', help='立即執行一次（不啟動排程器）')
-    parser.add_argument('--schedule', action='store_true', default=True, help='啟動排程器（每天6點執行）')
+    parser.add_argument('--schedule', action='store_true', default=True, help='啟動排程器（每天18:00抓取、18:30發送）')
     
     args = parser.parse_args()
     
