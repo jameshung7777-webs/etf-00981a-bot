@@ -1,5 +1,7 @@
 @echo off
 chcp 65001 >nul
+cd /d "%~dp0"
+
 git add -A
 git commit -m "更新程式碼" 2>nul || echo 無變更需提交
 git push origin main

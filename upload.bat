@@ -1,5 +1,15 @@
 @echo off
 chcp 65001 >nul
+cd /d "%~dp0"
+
+if not exist ".git" (
+    echo [錯誤] 此資料夾不是 Git 倉庫
+    echo 請在專案資料夾執行: git init
+    echo 並設定遠端: git remote add origin https://github.com/jameshung7777-webs/etf-00981a-bot.git
+    pause
+    exit /b 1
+)
+
 echo ========================================
 echo 上傳到 GitHub
 echo ========================================
