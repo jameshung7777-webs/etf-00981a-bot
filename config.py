@@ -26,7 +26,7 @@ TELEGRAM_CHAT_IDS_STR = (_ids_env.strip() if _ids_env else "").strip() or TELEGR
 # 群組內的「討論串 / Topic」ID（僅限有開啟論壇的群組）
 # 在該 topic 的訊息上按右鍵「複製連結」可從網址看到 thread 數字，或從 getUpdates 取得
 # 不設或留空表示發到一般群組（非 topic）
-TELEGRAM_MESSAGE_THREAD_ID_DEFAULT = ""  # 可在此寫死，例如 "123"
+TELEGRAM_MESSAGE_THREAD_ID_DEFAULT = "50627"  # t.me/c/2890383818/50627 → 發到此 topic
 TELEGRAM_MESSAGE_THREAD_ID = (os.getenv("TELEGRAM_MESSAGE_THREAD_ID") or TELEGRAM_MESSAGE_THREAD_ID_DEFAULT or "").strip()
 
 
