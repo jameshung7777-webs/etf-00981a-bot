@@ -18,7 +18,8 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", None)
 # 格式：用逗號分隔，例如 "123456789,-1001234567890"
 # 取得 Chat ID：1) 私聊：對 Bot 發訊息後執行 get_chat_id.py
 #              2) 群組：將 Bot 加入群組後，在群組發一則訊息，執行 get_chat_id.py
-TELEGRAM_CHAT_IDS = ""  # 本地設定，例如 "123456789,-1001234567890"
+# 這裡預設加入固定群組 ID
+TELEGRAM_CHAT_IDS = "-1002890383818"  # 本地設定，例如 "123456789,-1001234567890"
 TELEGRAM_CHAT_IDS_STR = os.getenv("TELEGRAM_CHAT_IDS", TELEGRAM_CHAT_IDS)
 
 # 訂閱名單（/start 指令自動加入的 Chat ID）
