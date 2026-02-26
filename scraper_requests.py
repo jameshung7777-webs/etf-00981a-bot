@@ -416,8 +416,9 @@ def _split_message(text, max_len=TELEGRAM_MAX_MESSAGE_LENGTH):
             rest = rest[max_len:]
     return chunks
 
-def send_to_telegram(message, bot_token, chat_id=None):
-    """發送消息到 Telegram（若超過長度限制會自動分段發送）"""
+def send_to_telegram(message, bot_token, chat_id=None, message_thread_id=None):
+    """發送消息到 Telegram（若超過長度限制會自動分段發送）。
+    message_thread_id: 群組內 Topic/討論串 ID，不設則發到一般聊天。"""
     if not chat_id:
         updates_url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
         try:
@@ -444,6 +445,8 @@ def send_to_telegram(message, bot_token, chat_id=None):
     
     for i, chunk in enumerate(chunks):
         data = {"chat_id": chat_id, "text": chunk}
+        if message_thread_id is not None:
+            data["message_thread_id"] = int(message_thread_id)
         try:
             response = requests.post(send_url, json=data, timeout=10)
             body = response.json() if response.text else {}

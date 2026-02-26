@@ -37,20 +37,25 @@ def _get_scraper_modules():
         return fetch_holdings_selenium, load_previous_holdings, save_holdings, compare_holdings, format_report, format_today_holdings, send_to_telegram
 
 def send_to_all_chats(msg_today, report_compare, bot_token, chat_ids, send_to_telegram_fn):
-    """發送訊息到所有聊天室和群組"""
+    """發送訊息到所有聊天室和群組（可指定群組內 Topic）。"""
+    try:
+        from config import get_message_thread_id
+        thread_id = get_message_thread_id()
+    except ImportError:
+        thread_id = None
     if not chat_ids:
         # 若沒設定，嘗試自動取得最後一個對話的 chat_id
         for cid in [None]:
-            ok1 = send_to_telegram_fn(msg_today, bot_token, cid)
-            ok2 = send_to_telegram_fn(report_compare, bot_token, cid)
+            ok1 = send_to_telegram_fn(msg_today, bot_token, cid, thread_id)
+            ok2 = send_to_telegram_fn(report_compare, bot_token, cid, thread_id)
             if ok1 or ok2:
                 return True
         print("[!] 無法取得 chat_id，請在 config.py 設定 TELEGRAM_CHAT_IDS 或 TELEGRAM_CHAT_ID")
         return False
     all_ok = True
     for cid in chat_ids:
-        ok1 = send_to_telegram_fn(msg_today, bot_token, cid)
-        ok2 = send_to_telegram_fn(report_compare, bot_token, cid)
+        ok1 = send_to_telegram_fn(msg_today, bot_token, cid, thread_id)
+        ok2 = send_to_telegram_fn(report_compare, bot_token, cid, thread_id)
         if not (ok1 and ok2):
             all_ok = False
     return all_ok

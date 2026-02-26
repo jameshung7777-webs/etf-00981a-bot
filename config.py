@@ -20,7 +20,25 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", None)
 #              2) 群組：將 Bot 加入群組後，在群組發一則訊息，執行 get_chat_id.py
 # 這裡預設加入固定群組 ID
 TELEGRAM_CHAT_IDS = "-1002890383818"  # 本地設定，例如 "123456789,-1001234567890"
-TELEGRAM_CHAT_IDS_STR = os.getenv("TELEGRAM_CHAT_IDS", TELEGRAM_CHAT_IDS)
+_ids_env = os.getenv("TELEGRAM_CHAT_IDS")
+TELEGRAM_CHAT_IDS_STR = (_ids_env.strip() if _ids_env else "").strip() or TELEGRAM_CHAT_IDS
+
+# 群組內的「討論串 / Topic」ID（僅限有開啟論壇的群組）
+# 在該 topic 的訊息上按右鍵「複製連結」可從網址看到 thread 數字，或從 getUpdates 取得
+# 不設或留空表示發到一般群組（非 topic）
+TELEGRAM_MESSAGE_THREAD_ID_DEFAULT = ""  # 可在此寫死，例如 "123"
+TELEGRAM_MESSAGE_THREAD_ID = (os.getenv("TELEGRAM_MESSAGE_THREAD_ID") or TELEGRAM_MESSAGE_THREAD_ID_DEFAULT or "").strip()
+
+
+def get_message_thread_id():
+    """取得要發送到的 Topic ID（int 或 None）。None 表示不指定 topic。"""
+    s = (os.getenv("TELEGRAM_MESSAGE_THREAD_ID") or TELEGRAM_MESSAGE_THREAD_ID or "").strip()
+    if not s:
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
 
 # 訂閱名單（/start 指令自動加入的 Chat ID）
 SUBSCRIBED_CHATS_FILE = "subscribed_chats.json"
