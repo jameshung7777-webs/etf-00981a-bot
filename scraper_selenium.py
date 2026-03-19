@@ -35,6 +35,28 @@ def _is_garbage_name(name):
 def _is_garbage_code(code):
     return code in ('0098', '2026')
 
+def _parse_percent(text):
+    """把百分比字串轉成 float，例如 '3.21%' -> 3.21"""
+    if text is None:
+        return None
+    s = str(text).strip().replace("%", "").replace("％", "").replace(",", "")
+    if not s:
+        return None
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+def _resolve_weight_pct(item):
+    """從不同欄位名稱解析單檔市值占比（百分比）。"""
+    if not isinstance(item, dict):
+        return None
+    for key in ("weight_pct", "weight", "ratio", "proportion", "holdingRatio", "percent"):
+        v = _parse_percent(item.get(key))
+        if v is not None and v >= 0:
+            return v
+    return None
+
 def setup_driver():
     """設置 Chrome WebDriver（支援 GitHub Actions 環境）"""
     import os
@@ -291,6 +313,7 @@ def fetch_holdings_selenium():
                         # 解析表格結構：代號 | 名稱 | 權重 | 持有數 | 單位
                         code_text = cells[0].text.strip()
                         name_text = cells[1].text.strip() if len(cells) > 1 else ""
+                        weight_text = cells[2].text.strip() if len(cells) > 2 else ""  # 權重在第3列（索引2）
                         holding_text = cells[3].text.strip() if len(cells) > 3 else ""  # 持有數在第4列（索引3）
                         unit_text = cells[4].text.strip() if len(cells) > 4 else ""  # 單位在第5列（索引4）
                         
@@ -325,11 +348,15 @@ def fetch_holdings_selenium():
                         shares = shares_raw // 1000
                         
                         if shares > 0 and len(code) == 4 and code.isdigit():
-                            holdings.append({
+                            item = {
                                 'code': code,
                                 'name': name_text,
                                 'shares': shares
-                            })
+                            }
+                            w = _parse_percent(weight_text)
+                            if w is not None:
+                                item['weight_pct'] = w
+                            holdings.append(item)
                             if len(holdings) <= 5:  # 只顯示前5筆的調試信息
                                 print(f"    解析到: {name_text} ({code}) - {shares_raw} 股 = {shares} 張")
                     
@@ -441,20 +468,24 @@ def fetch_holdings_selenium():
         if holdings:
             # 標準化並過濾垃圾（只保留乾淨持股）
             result = []
-            for item in holdings:
-                if not isinstance(item, dict):
+            for item_src in holdings:
+                if not isinstance(item_src, dict):
                     continue
-                code = str(item.get('code', item.get('stockCode', item.get('symbol', '')))).strip()
-                name = str(item.get('name', item.get('stockName', item.get('stock_name', '')))).strip()
+                code = str(item_src.get('code', item_src.get('stockCode', item_src.get('symbol', '')))).strip()
+                name = str(item_src.get('name', item_src.get('stockName', item_src.get('stock_name', '')))).strip()
                 try:
-                    shares = int(item.get('shares', item.get('quantity', item.get('amount', 0))) or 0)
+                    shares = int(item_src.get('shares', item_src.get('quantity', item_src.get('amount', 0))) or 0)
                 except (ValueError, TypeError):
                     continue
                 if len(code) != 4 or not code.isdigit() or shares <= 0:
                     continue
                 if _is_garbage_code(code) or _is_garbage_name(name):
                     continue
-                result.append({'code': code, 'name': name, 'shares': shares})
+                item = {'code': code, 'name': name, 'shares': shares}
+                w = _resolve_weight_pct(item_src)
+                if w is not None:
+                    item['weight_pct'] = w
+                result.append(item)
             
             if result:
                 print(f"[OK] 成功解析 {len(result)} 檔股票")
@@ -606,10 +637,22 @@ def format_today_holdings(holdings, date_str):
              and not _is_garbage_code(str(h.get('code', '')))
              and not _is_garbage_name(str(h.get('name', '')))]
     lines = [f"00981A 今日持股明細（{date_str}）", ""]
+    has_weight = any(_resolve_weight_pct(h) is not None for h in clean)
+    total_shares = sum(int(h.get('shares', 0) or 0) for h in clean) or 0
     for h in sorted(clean, key=lambda x: (x.get('name') or '')):
-        lines.append(f"・{h['name']}（{h['code']}）：{h['shares']:,} 張")
+        w = _resolve_weight_pct(h)
+        if has_weight and w is not None:
+            lines.append(f"・{h['name']}（{h['code']}）：{h['shares']:,} 張｜市值占比 {w:.2f}%")
+        elif has_weight:
+            lines.append(f"・{h['name']}（{h['code']}）：{h['shares']:,} 張｜市值占比 N/A")
+        else:
+            pct = (int(h.get('shares', 0) or 0) / total_shares * 100) if total_shares else 0
+            lines.append(f"・{h['name']}（{h['code']}）：{h['shares']:,} 張｜持有張數占比(估算) {pct:.2f}%")
     lines.append("")
-    lines.append("＊以上為「張數」整理（1 張＝1,000 股），僅供參考，未涉及投資建議。")
+    if has_weight:
+        lines.append("＊市值占比使用網站提供之權重欄位（%）整理，僅供參考，未涉及投資建議。")
+    else:
+        lines.append("＊此頁未提供權重時，以持有張數占比作估算，非真正市值占比，僅供參考。")
     return "\n".join(lines)
 
 def format_report(changes, prev_date, curr_date):

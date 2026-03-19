@@ -13,8 +13,15 @@ if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
     except Exception:
         pass
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import threading
+
+# 台灣時區 UTC+8，讓 GitHub Actions（UTC）執行時顯示台灣日期
+TAIWAN_TZ = timezone(timedelta(hours=8))
+
+def _now_taiwan():
+    """取得目前台灣時間（用於日期與顯示，避免 workflow 顯示「昨天」）"""
+    return datetime.now(TAIWAN_TZ)
 import schedule
 import time
 
@@ -66,12 +73,12 @@ def _date_str(dt):
 
 def fetch_data_only():
     """18:00 執行：只抓取數據並儲存，不發送訊息。成功回傳 True，失敗回傳 False。"""
-    today = datetime.now()
+    today = _now_taiwan()
     today_str = _date_str(today)
     print("="*60)
     print("[18:00] 00981A 抓取持股數據")
     print("="*60)
-    print(f"執行時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    print(f"執行時間（台灣）: {today.strftime('%Y-%m-%d %H:%M:%S')}\n")
     
     current_holdings = None
     
@@ -121,7 +128,7 @@ def fetch_data_only():
 
 def send_messages_only():
     """18:30 執行：載入已儲存數據，比較變化，發送到所有聊天室和群組"""
-    today = datetime.now()
+    today = _now_taiwan()
     yesterday = today - timedelta(days=1)
     today_str = _date_str(today)
     yesterday_str = _date_str(yesterday)
@@ -129,7 +136,7 @@ def send_messages_only():
     print("="*60)
     print("[18:30] 00981A 發送持股報告")
     print("="*60)
-    print(f"執行時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    print(f"執行時間（台灣）: {today.strftime('%Y-%m-%d %H:%M:%S')}\n")
     
     try:
         from config import TELEGRAM_BOT_TOKEN, get_chat_ids
@@ -187,7 +194,7 @@ def run_scheduler():
     print("="*60)
     print("00981A ETF 自動追蹤系統已啟動")
     print("="*60)
-    print(f"啟動時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"啟動時間（台灣）: {_now_taiwan().strftime('%Y-%m-%d %H:%M:%S')}")
     print("排程設定:")
     print("  18:00 - 抓取持股數據並儲存")
     print("  18:30 - 發送持股明細與變化報告到所有聊天室/群組")
