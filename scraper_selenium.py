@@ -639,7 +639,17 @@ def format_today_holdings(holdings, date_str):
     lines = [f"00981A 今日持股明細（{date_str}）", ""]
     has_weight = any(_resolve_weight_pct(h) is not None for h in clean)
     total_shares = sum(int(h.get('shares', 0) or 0) for h in clean) or 0
-    for h in sorted(clean, key=lambda x: (x.get('name') or '')):
+    if has_weight:
+        # 有權重時，依市值占比由高到低排列；缺值放最後
+        ordered = sorted(
+            clean,
+            key=lambda x: (_resolve_weight_pct(x) is None, -(_resolve_weight_pct(x) or -1.0), (x.get('name') or ''))
+        )
+    else:
+        # 無權重時，改用持有張數由高到低做估算排序
+        ordered = sorted(clean, key=lambda x: (-(int(x.get('shares', 0) or 0)), (x.get('name') or '')))
+
+    for h in ordered:
         w = _resolve_weight_pct(h)
         if has_weight and w is not None:
             lines.append(f"・{h['name']}（{h['code']}）：{h['shares']:,} 張｜市值占比 {w:.2f}%")
