@@ -652,17 +652,17 @@ def format_today_holdings(holdings, date_str):
     for h in ordered:
         w = _resolve_weight_pct(h)
         if has_weight and w is not None:
-            lines.append(f"・{h['name']}（{h['code']}）：{h['shares']:,} 張｜市值占比 {w:.2f}%")
+            lines.append(f"・{h['name']}（{h['code']}）：{h['shares']:,} 張｜{w:.2f}%")
         elif has_weight:
-            lines.append(f"・{h['name']}（{h['code']}）：{h['shares']:,} 張｜市值占比 N/A")
+            lines.append(f"・{h['name']}（{h['code']}）：{h['shares']:,} 張｜N/A")
         else:
             pct = (int(h.get('shares', 0) or 0) / total_shares * 100) if total_shares else 0
             lines.append(f"・{h['name']}（{h['code']}）：{h['shares']:,} 張｜持有張數占比(估算) {pct:.2f}%")
     lines.append("")
     if has_weight:
-        lines.append("＊市值占比使用網站提供之權重欄位（%）整理，僅供參考，未涉及投資建議。")
+        lines.append("＊百分比使用網站提供之權重欄位（%）整理，僅供參考，未涉及投資建議。")
     else:
-        lines.append("＊此頁未提供權重時，以持有張數占比作估算，非真正市值占比，僅供參考。")
+        lines.append("＊此頁未提供權重時，以持有張數占比作估算，非真正市值，僅供參考。")
     return "\n".join(lines)
 
 def format_report(changes, prev_date, curr_date):
