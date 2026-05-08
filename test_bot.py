@@ -31,7 +31,8 @@ try:
     thread_id = config.get_message_thread_id()
     print(f"\n  Token     : {token[:10]}...{token[-6:]}")
     print(f"  Chat IDs  : {chat_ids}")
-    print(f"  Thread ID : {thread_id}")
+    print(f"             （config 的 TELEGRAM_CHAT_IDS + TELEGRAM_CHAT_ID + subscribed_chats.json 合併）")
+    print(f"  Thread ID : {thread_id}（僅套用在群組；私聊不會帶 Topic）")
 except Exception as e:
     print(f"  [FAIL] 讀取 config 失敗: {e}")
     sys.exit(1)
@@ -76,7 +77,8 @@ for cid in chat_ids:
         "chat_id": cid,
         "text": "🔧 [診斷] Bot 連線測試訊息，請忽略。"
     }
-    if thread_id:
+    # Topic 僅適用群組（chat_id 為負數）；私聊不可帶 message_thread_id
+    if thread_id is not None and isinstance(cid, int) and cid < 0:
         payload["message_thread_id"] = thread_id
 
     try:

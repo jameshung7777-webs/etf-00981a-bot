@@ -14,6 +14,7 @@
 import sys
 import os
 import re
+import json
 import time
 import requests
 
@@ -83,10 +84,23 @@ def update_config_chat_ids(new_ids_str: str) -> bool:
         print(f"  [!] 更新 config.py 失敗: {e}")
         return False
 
+def update_subscribed_chats(chat_id_list):
+    """同步 subscribed_chats.json，避免舊 /start 訂閱 ID 繼續被合併進發送清單"""
+    path = os.path.join(BASE_DIR, "subscribed_chats.json")
+    from datetime import datetime
+    data = {"chat_ids": chat_id_list, "updated": datetime.now().isoformat()}
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return True
+    except Exception as e:
+        print(f"  [!] 更新 subscribed_chats.json 失敗: {e}")
+        return False
+
 def push_to_github() -> bool:
     import subprocess
     try:
-        subprocess.run(["git", "add", "config.py"], check=True, cwd=BASE_DIR)
+        subprocess.run(["git", "add", "config.py", "subscribed_chats.json"], check=True, cwd=BASE_DIR)
         subprocess.run(["git", "commit", "-m", "更新發送目標 Chat IDs"], check=True, cwd=BASE_DIR)
         subprocess.run(["git", "pull", "origin", "main", "--rebase"], check=True, cwd=BASE_DIR)
         subprocess.run(["git", "push", "origin", "main"], check=True, cwd=BASE_DIR)
@@ -192,6 +206,13 @@ def main():
         print("  [OK] config.py 已更新")
     else:
         print("  [!] 自動更新失敗，請手動修改 config.py 的 TELEGRAM_CHAT_IDS")
+
+    # ── 同步 subscribed_chats.json（與 config 一致，避免舊 ID 殘留）──
+    ids_only = [c["id"] for c in selected]
+    _sep("同步 subscribed_chats.json")
+    if update_subscribed_chats(ids_only):
+        print("  [OK] subscribed_chats.json 已與選擇的聊天室同步")
+        print("      （bot_listener /start 訂閱會再追加；此檔僅清除設定工具選定的清單）")
 
     # ── 推送到 GitHub ────────────────────────────────
     _sep("推送到 GitHub")
