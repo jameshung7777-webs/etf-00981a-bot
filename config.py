@@ -18,10 +18,22 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", None)
 # 格式：用逗號分隔，例如 "123456789,-1001234567890"
 # 取得 Chat ID：1) 私聊：對 Bot 發訊息後執行 get_chat_id.py
 #              2) 群組：將 Bot 加入群組後，在群組發一則訊息，執行 get_chat_id.py
-# 這裡預設加入固定群組 ID
-TELEGRAM_CHAT_IDS = "-1002890383818"  # 本地設定，例如 "123456789,-1001234567890"
+# 這裡預設加入固定群組 ID（可被 setup_chats 等工具覆寫此行）
+TELEGRAM_CHAT_IDS = "-1002890383818"
+
+
+def _parse_chat_ids_csv(s):
+    if not s:
+        return []
+    return [x.strip() for x in str(s).replace(" ", "").split(",") if x.strip()]
+
+
+# GitHub Actions 會注入環境變數 TELEGRAM_CHAT_IDS（Secrets）。
+# 若先前「有設 Secret 就完全覆寫檔案」，會漏掉上面預設的群組；改為「檔案預設 + 環境變數」合併去重。
 _ids_env = os.getenv("TELEGRAM_CHAT_IDS")
-TELEGRAM_CHAT_IDS_STR = (_ids_env.strip() if _ids_env else "").strip() or TELEGRAM_CHAT_IDS
+_base_ids = _parse_chat_ids_csv(TELEGRAM_CHAT_IDS)
+_env_ids = _parse_chat_ids_csv(_ids_env) if _ids_env else []
+TELEGRAM_CHAT_IDS_STR = ",".join(dict.fromkeys(_base_ids + _env_ids))
 
 # 群組內的「討論串 / Topic」ID（僅限有開啟論壇的群組）
 # 在該 topic 的訊息上按右鍵「複製連結」可從網址看到 thread 數字，或從 getUpdates 取得

@@ -178,7 +178,7 @@ def send_messages_only():
     current_holdings = data.get("holdings", [])
     today_str = data.get("date", today_str)
     
-    previous_data = load_prev()
+    previous_data = load_prev(current_date_str=today_str)
     msg_today = format_today(current_holdings, today_str)
     
     if previous_data and previous_data.get("date") != today_str:

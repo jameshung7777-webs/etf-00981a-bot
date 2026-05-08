@@ -95,13 +95,6 @@ jobs:
         install-chromedriver: true
         install-dependencies: true
 
-    # ── 隨機延遲（1～11 分鐘），讓執行時間不固定 ────────
-    - name: 隨機延遲
-      run: |
-        DELAY=$((RANDOM % 600 + 60))
-        echo "隨機等待 ${DELAY} 秒（$(( DELAY / 60 )) 分 $(( DELAY % 60 )) 秒）..."
-        sleep $DELAY
-
     # ── 執行主程式 ────────────────────────────────────
     - name: 執行
       env:
@@ -138,7 +131,7 @@ jobs:
               exit 0
             fi
             echo "::warning::push 被拒絕或失敗，第 ${attempt}/5 次重試（先 pull --rebase）..."
-            sleep $((RANDOM % 25 + 15))
+            sleep 10
           done
           echo "::error::push 多次失敗，請檢查是否與其他提交衝突"
           exit 1

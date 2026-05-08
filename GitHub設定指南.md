@@ -34,6 +34,10 @@ git push -u origin main
   - 取得方式：在本地執行 `python get_chat_id.py`
   - 或直接填寫數字，例如：`123456789`
 
+####（選用）`TELEGRAM_CHAT_IDS`：多個接收者
+- 若倉庫的 `config.py` 已內建群組 ID（如招生報名專區），**仍建議**在 Secret 加你的私聊 ID 等，格式：`-1001234567890,123456789`（逗號分隔）。
+- **行為說明**：CI 的 `TELEGRAM_CHAT_IDS` 與 `config.py` 裡的 `TELEGRAM_CHAT_IDS` 會**合併、去重**後再發送，不會因為只設了 Secret 就覆寫掉檔案裡的群組。
+
 ### 步驟 3：啟用 GitHub Actions
 
 1. 前往倉庫的 **Actions** 標籤

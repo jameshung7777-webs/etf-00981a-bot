@@ -258,39 +258,95 @@ import json
 import os
 import requests
 
-def load_previous_holdings(data_file=None):
-    """載入「昨天」的持股數據做比較；優先讀取昨天日期的檔名，沒有再讀 holdings_data.json。會過濾垃圾項目。"""
-    from datetime import datetime, timedelta
+def load_previous_holdings(data_file=None, current_date_str=None):
+    """載入「上一筆」持股快照做比較：依 JSON 內 date，嚴格早於今日且日期最新者。
+
+    不比對「UTC 日曆昨天」或檔名日期（易與台灣日切錯位）；改掃描所有 holdings_data_*.json
+    與 holdings_data.json，選上一個存檔業務日，週一會自動對到上一個交易日檔案（若 repo 內有）。
+    current_date_str：今日持股的 date（與 holdings_data.json 一致）；若省略則用台灣日期。
+    data_file：若指定路徑則只讀該檔（不做日期篩選）。"""
+    import glob
+    from datetime import datetime, timedelta, timezone
+
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    yesterday = (datetime.now() - timedelta(days=1))
-    yesterday_prefix = f"holdings_data_{yesterday:%Y-%m-%d}_"
-    if data_file is None:
+    taiwan_tz = timezone(timedelta(hours=8))
+
+    def _parse_slash_date(s):
+        if not s:
+            return None
+        raw = str(s).strip().replace("-", "/")
+        parts = raw.split("/")
+        if len(parts) >= 3:
+            try:
+                return datetime(int(parts[0]), int(parts[1]), int(parts[2])).date()
+            except (ValueError, TypeError):
+                return None
+        return None
+
+    def _clean_payload(data):
+        if data and "holdings" in data:
+            clean = [
+                h
+                for h in data["holdings"]
+                if isinstance(h, dict)
+                and h.get("code")
+                and h.get("name")
+                and not _is_garbage_code(str(h.get("code", "")))
+                and not _is_garbage_name(str(h.get("name", "")))
+            ]
+            return {"date": data["date"], "holdings": clean}
+        return data
+
+    if data_file is not None:
+        if not os.path.exists(data_file):
+            return None
         try:
-            import glob
-            pattern = os.path.join(base_dir, yesterday_prefix + "*.json")
-            files = glob.glob(pattern)
-            if files:
-                files.sort(reverse=True)
-                data_file = files[0]
-            else:
-                data_file = os.path.join(base_dir, "holdings_data.json")
-        except Exception:
-            data_file = os.path.join(base_dir, "holdings_data.json")
-    if os.path.exists(data_file):
-        try:
-            with open(data_file, 'r', encoding='utf-8') as f:
+            with open(data_file, encoding="utf-8") as f:
                 data = json.load(f)
-            if data and 'holdings' in data:
-                clean = [h for h in data['holdings']
-                         if isinstance(h, dict) and h.get('code') and h.get('name')
-                         and not _is_garbage_code(str(h.get('code', '')))
-                         and not _is_garbage_name(str(h.get('name', '')))]
-                data = {'date': data['date'], 'holdings': clean}
-            return data
+            return _clean_payload(data)
         except Exception as e:
             print(f"載入歷史數據時發生錯誤: {e}")
             return None
-    return None
+
+    now_tw = datetime.now(taiwan_tz)
+    if current_date_str is None:
+        current_date_str = f"{now_tw.year}/{now_tw.month}/{now_tw.day}"
+    current_d = _parse_slash_date(current_date_str)
+    if current_d is None:
+        current_d = now_tw.date()
+
+    paths = glob.glob(os.path.join(base_dir, "holdings_data_*.json"))
+    hj = os.path.join(base_dir, "holdings_data.json")
+    if os.path.isfile(hj):
+        paths.append(hj)
+
+    candidates = []
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            continue
+        if not data or "holdings" not in data:
+            continue
+        d = _parse_slash_date(data.get("date"))
+        if d is None or d >= current_d:
+            continue
+        candidates.append((d, path, data))
+
+    if not candidates:
+        return None
+
+    max_d = max(c[0] for c in candidates)
+    same_day = [c for c in candidates if c[0] == max_d]
+    _, chosen_path, raw = max(same_day, key=lambda c: c[1])
+
+    try:
+        print(f"[i] 持股變化比較基準：{os.path.basename(chosen_path)}（{raw.get('date')}）")
+        return _clean_payload(raw)
+    except Exception as e:
+        print(f"載入歷史數據時發生錯誤: {e}")
+        return None
 
 def save_holdings(holdings, date_str, data_file=None):
     """保存當前持股數據。會寫入：帶日期時間的檔案 + holdings_data.json（供下次比較用）"""
@@ -315,6 +371,16 @@ def save_holdings(holdings, date_str, data_file=None):
     except Exception as e:
         print(f"保存數據時發生錯誤: {e}")
 
+def _shares_int(val):
+    """JSON 可能為字串或浮點，統一為張數整數再比較。"""
+    try:
+        if val is None:
+            return 0
+        return int(float(val))
+    except (TypeError, ValueError):
+        return 0
+
+
 def compare_holdings(current, previous):
     """比較持股變化"""
     if not previous or 'holdings' not in previous:
@@ -338,8 +404,8 @@ def compare_holdings(current, previous):
         removed.append(prev_holdings[code])
     
     for code in current_codes & previous_codes:
-        curr_shares = curr_holdings[code]['shares']
-        prev_shares = prev_holdings[code]['shares']
+        curr_shares = _shares_int(curr_holdings[code].get('shares'))
+        prev_shares = _shares_int(prev_holdings[code].get('shares'))
         
         if curr_shares > prev_shares:
             increased.append({
