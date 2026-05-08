@@ -160,7 +160,7 @@ def send_messages_only():
         bot_token = TELEGRAM_BOT_TOKEN
         chat_ids = get_chat_ids()
     except ImportError:
-        bot_token = "8118096050:AAFbIs3h1FmbqI4bgCkOCV1Ndtl9kQ7kYzo"
+        bot_token = "8403948543:AAGB7M46NK6UQprmn_g2z8HnPWWK_jUgfX0"
         chat_ids = []
     
     _, load_prev, _, compare_fn, format_report, format_today, send_fn = _get_scraper_modules()
@@ -187,12 +187,20 @@ def send_messages_only():
     else:
         report_compare = f"00981A 持股更新（{yesterday_str} → {today_str}）\n\n（無前日資料可比較）\n\n" + msg_today
     
-    if bot_token:
-        print(f"正在發送到 {len(chat_ids) or 1} 個聊天室/群組...")
-        send_to_all_chats(msg_today, report_compare, bot_token, chat_ids, send_fn)
-        print("[OK] 訊息已發送到所有設定對象\n")
+    if not bot_token:
+        print("[FAIL] 未設定 Telegram Bot Token\n")
+        print("="*60 + "\n")
+        import sys; sys.exit(1)
+
+    print(f"正在發送到 {len(chat_ids) or 1} 個聊天室/群組...")
+    print(f"[i] Chat IDs: {chat_ids}")
+    ok = send_to_all_chats(msg_today, report_compare, bot_token, chat_ids, send_fn)
+    if ok:
+        print("[OK] 訊息已成功發送到所有設定對象\n")
     else:
-        print("[!] 未設定 Telegram Bot Token\n")
+        print("[FAIL] 部分或全部訊息發送失敗！\n")
+        print("="*60 + "\n")
+        import sys; sys.exit(1)
     print("="*60 + "\n")
 
 def fetch_and_send():
