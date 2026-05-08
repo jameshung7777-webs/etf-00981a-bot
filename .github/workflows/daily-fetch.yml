@@ -1,18 +1,48 @@
-name: 00981A ETF 每日抓取（16:30 台灣）
+name: 00981A ETF 每日排程
 
 on:
   schedule:
-    # 台灣時間 16:30 = UTC 08:30
+    # 台灣 16:30 = UTC 08:30 → 抓取
     - cron: '30 8 * * *'
-  workflow_dispatch:  # 允許手動觸發
+    # 台灣 17:00 = UTC 09:00 → 發送
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '手動執行模式'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - fetch-only
+          - send-only
+          - all
 
 jobs:
-  fetch:
+  run:
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
+    # ── 判斷本次要跑「抓取」還是「發送」 ──────────────
+    - name: 判斷執行模式
+      id: mode
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "mode=${{ inputs.mode }}" >> $GITHUB_OUTPUT
+        elif [ "${{ github.event.schedule }}" = "30 8 * * *" ]; then
+          echo "mode=fetch-only" >> $GITHUB_OUTPUT
+        elif [ "${{ github.event.schedule }}" = "0 9 * * *" ]; then
+          echo "mode=send-only" >> $GITHUB_OUTPUT
+        else
+          echo "mode=all" >> $GITHUB_OUTPUT
+        fi
+
+    - name: 顯示執行模式
+      run: echo "▶ 本次模式：${{ steps.mode.outputs.mode }}"
+
+    # ── 環境準備 ──────────────────────────────────────
     - name: 檢出程式碼
       uses: actions/checkout@v4
       with:
@@ -23,32 +53,48 @@ jobs:
       with:
         python-version: '3.9'
 
-    - name: 安裝依賴
+    - name: 安裝 Python 依賴
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: 安裝 Chrome（GitHub Actions 專用）
+    # Chrome 只在「抓取」時才需要
+    - name: 安裝 Chrome（抓取模式）
       id: setup-chrome
+      if: steps.mode.outputs.mode != 'send-only'
       uses: browser-actions/setup-chrome@v2
       with:
         chrome-version: stable
         install-chromedriver: true
         install-dependencies: true
 
-    - name: 隨機延遲（防止固定時間被偵測）
+    # ── 隨機延遲（1～11 分鐘），讓執行時間不固定 ────────
+    - name: 隨機延遲
       run: |
         DELAY=$((RANDOM % 600 + 60))
-        echo "隨機等待 ${DELAY} 秒（共 $(( DELAY / 60 )) 分 $(( DELAY % 60 )) 秒）..."
+        echo "隨機等待 ${DELAY} 秒（$(( DELAY / 60 )) 分 $(( DELAY % 60 )) 秒）..."
         sleep $DELAY
 
-    - name: 執行抓取
+    # ── 執行主程式 ────────────────────────────────────
+    - name: 執行
       env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
+        TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
         CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
         CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
-      run: python main.py --fetch-only
+      run: |
+        MODE="${{ steps.mode.outputs.mode }}"
+        if [ "$MODE" = "all" ]; then
+          python main.py --now
+        else
+          python main.py --${MODE}
+        fi
 
-    - name: 提交 holdings 數據到 repo
+    # ── 儲存 JSON（只在抓取後執行）──────────────────────
+    - name: 提交 holdings JSON 到 repo
+      if: steps.mode.outputs.mode != 'send-only'
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -56,7 +102,7 @@ jobs:
         if ! git diff --staged --quiet 2>/dev/null; then
           git commit -m "chore: 儲存每日持股數據 $(date +%Y-%m-%d)"
           git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:${{ github.ref_name }}
-          echo "已提交並推送持股 JSON 檔"
+          echo "已提交並推送持股 JSON"
         else
           echo "無新數據需提交"
         fi
@@ -64,7 +110,7 @@ jobs:
 
     - name: 上傳數據備份
       uses: actions/upload-artifact@v4
-      if: always()
+      if: always() && steps.mode.outputs.mode != 'send-only'
       with:
         name: holdings-data
         path: holdings_data*.json
