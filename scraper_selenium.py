@@ -735,7 +735,9 @@ def _split_message(text, max_len=TELEGRAM_MAX_MESSAGE_LENGTH):
 
 def send_to_telegram(message, bot_token, chat_id=None, message_thread_id=None):
     """發送消息到 Telegram（若超過長度限制會自動分段發送）。
-    message_thread_id: 群組內 Topic/討論串 ID，不設則發到一般聊天。"""
+    message_thread_id: 群組內 Topic/討論串 ID，不設則發到一般聊天。
+    內建隨機延遲與 Rate Limit（429）自動重試，防止被 Telegram 偵測為異常發送。"""
+    import random, time as _time
     if not chat_id:
         updates_url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
         try:
@@ -751,35 +753,57 @@ def send_to_telegram(message, bot_token, chat_id=None, message_thread_id=None):
         except Exception as e:
             print(f"獲取 chat_id 時發生錯誤: {e}")
             return False
-    
+
     send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     chunks = _split_message(message)
     if len(chunks) > 5:
         chunks = chunks[:5]
         chunks[-1] = chunks[-1] + "\n\n…（訊息過長已截斷）"
     all_ok = True
-    
+
     for i, chunk in enumerate(chunks):
+        # 段落間加隨機延遲（1.5～4 秒），模擬人工發送行為
+        if i > 0:
+            _time.sleep(random.uniform(1.5, 4.0))
+
         data = {"chat_id": chat_id, "text": chunk}
         if message_thread_id is not None:
             data["message_thread_id"] = int(message_thread_id)
-        try:
-            response = requests.post(send_url, json=data, timeout=10)
-            body = response.json() if response.text else {}
-            if response.status_code == 200 and body.get("ok"):
-                if len(chunks) > 1:
-                    print(f"[OK] 訊息第 {i + 1}/{len(chunks)} 段已發送")
+
+        # 最多重試 3 次，遇 Rate Limit（429）指數退避
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(send_url, json=data, timeout=15)
+                body = response.json() if response.text else {}
+
+                if response.status_code == 429:
+                    retry_after = body.get("parameters", {}).get("retry_after", 5 * (2 ** attempt))
+                    wait = retry_after + random.uniform(0.5, 2.0)
+                    print(f"[!] 發送頻率超限（429），等待 {wait:.1f} 秒後重試...")
+                    _time.sleep(wait)
+                    continue
+
+                if response.status_code == 200 and body.get("ok"):
+                    if len(chunks) > 1:
+                        print(f"[OK] 訊息第 {i + 1}/{len(chunks)} 段已發送")
+                    else:
+                        print("[OK] 消息已成功發送到 Telegram")
+                    break
                 else:
-                    print("[OK] 消息已成功發送到 Telegram")
-            else:
+                    all_ok = False
+                    err = body.get("description", response.text or f"HTTP {response.status_code}")
+                    print(f"發送失敗: {err}")
+                    break
+            except Exception as e:
                 all_ok = False
-                err = body.get("description", response.text or f"HTTP {response.status_code}")
-                print(f"發送失敗: {err}")
-        except Exception as e:
-            all_ok = False
-            print(f"發送消息時發生錯誤: {e}")
-            import traceback
-            traceback.print_exc()
+                print(f"發送消息時發生錯誤（第 {attempt+1} 次）: {e}")
+                if attempt < max_retries - 1:
+                    _time.sleep(random.uniform(2.0, 5.0))
+                else:
+                    import traceback
+                    traceback.print_exc()
+
     return all_ok
 
 def main():
