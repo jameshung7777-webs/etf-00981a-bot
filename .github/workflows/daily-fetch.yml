@@ -26,21 +26,48 @@ jobs:
 
     steps:
     # ── 判斷本次要跑「抓取」還是「發送」 ──────────────
+    # 說明：${{ github.event.schedule }} 在部分 runner 上會為空，改從 GITHUB_EVENT_PATH 用 jq 讀取
     - name: 判斷執行模式
       id: mode
       run: |
+        set -e
+        # workflow_dispatch：用手動選項
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          echo "mode=${{ inputs.mode }}" >> $GITHUB_OUTPUT
-        elif [ "${{ github.event.schedule }}" = "30 8 * * *" ]; then
-          echo "mode=fetch-only" >> $GITHUB_OUTPUT
-        elif [ "${{ github.event.schedule }}" = "0 9 * * *" ]; then
-          echo "mode=send-only" >> $GITHUB_OUTPUT
-        else
-          echo "mode=all" >> $GITHUB_OUTPUT
+          echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+          echo "trigger=workflow_dispatch" >> "$GITHUB_OUTPUT"
+          exit 0
         fi
 
+        SCHEDULE=""
+        if [ -n "${GITHUB_EVENT_PATH:-}" ] && [ -f "$GITHUB_EVENT_PATH" ]; then
+          SCHEDULE=$(jq -r '.schedule // empty' "$GITHUB_EVENT_PATH" 2>/dev/null || true)
+        fi
+        if [ -z "$SCHEDULE" ]; then
+          SCHEDULE="${{ github.event.schedule }}"
+        fi
+        echo "cron=$SCHEDULE" >> "$GITHUB_OUTPUT"
+
+        case "$SCHEDULE" in
+          "30 8 * * *")
+            echo "mode=fetch-only" >> "$GITHUB_OUTPUT"
+            echo "trigger=schedule_fetch" >> "$GITHUB_OUTPUT"
+            ;;
+          "0 9 * * *")
+            echo "mode=send-only" >> "$GITHUB_OUTPUT"
+            echo "trigger=schedule_send" >> "$GITHUB_OUTPUT"
+            ;;
+          *)
+            echo "::warning::無法辨識 cron='$SCHEDULE'，使用 fallback（請檢查 workflow）"
+            echo "mode=fetch-only" >> "$GITHUB_OUTPUT"
+            echo "trigger=unknown_fallback_fetch" >> "$GITHUB_OUTPUT"
+            ;;
+        esac
+
     - name: 顯示執行模式
-      run: echo "▶ 本次模式：${{ steps.mode.outputs.mode }}"
+      run: |
+        echo "▶ 本次模式：${{ steps.mode.outputs.mode }}"
+        echo "▶ cron：${{ steps.mode.outputs.cron }}"
+        echo "▶ trigger：${{ steps.mode.outputs.trigger }}"
 
     # ── 環境準備 ──────────────────────────────────────
     - name: 檢出程式碼
@@ -86,13 +113,14 @@ jobs:
         CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
       run: |
         MODE="${{ steps.mode.outputs.mode }}"
+        echo "執行 python main.py，MODE=$MODE"
         if [ "$MODE" = "all" ]; then
           python main.py --now
         else
-          python main.py --${MODE}
+          python main.py "--${MODE}"
         fi
 
-    # ── 儲存 JSON（只在抓取後執行）──────────────────────
+    # ── 儲存 JSON（只在抓取後執行）；push 前先 pull --rebase 避免被拒絕 ──
     - name: 提交 holdings JSON 到 repo
       if: steps.mode.outputs.mode != 'send-only'
       run: |
@@ -101,8 +129,19 @@ jobs:
         git add holdings_data.json holdings_data_*.json 2>/dev/null || true
         if ! git diff --staged --quiet 2>/dev/null; then
           git commit -m "chore: 儲存每日持股數據 $(date +%Y-%m-%d)"
-          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:${{ github.ref_name }}
-          echo "已提交並推送持股 JSON"
+          BRANCH="${GITHUB_REF_NAME}"
+          for attempt in 1 2 3 4 5; do
+            git fetch origin "$BRANCH"
+            git pull --rebase origin "$BRANCH" || true
+            if git push origin "$BRANCH"; then
+              echo "已提交並推送持股 JSON"
+              exit 0
+            fi
+            echo "::warning::push 被拒絕或失敗，第 ${attempt}/5 次重試（先 pull --rebase）..."
+            sleep $((RANDOM % 25 + 15))
+          done
+          echo "::error::push 多次失敗，請檢查是否與其他提交衝突"
+          exit 1
         else
           echo "無新數據需提交"
         fi
