@@ -12,7 +12,7 @@ import requests
 try:
     from config import TELEGRAM_BOT_TOKEN
 except ImportError:
-    TELEGRAM_BOT_TOKEN = "8118096050:AAFbIs3h1FmbqI4bgCkOCV1Ndtl9kQ7kYzo"
+    TELEGRAM_BOT_TOKEN = "8403948543:AAGB7M46NK6UQprmn_g2z8HnPWWK_jUgfX0"
 
 def main():
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
