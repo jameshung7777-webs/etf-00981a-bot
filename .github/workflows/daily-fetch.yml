@@ -1,50 +1,33 @@
-name: 00981A ETF 每日自動抓取
+name: 00981A ETF 每日抓取（16:30 台灣）
 
 on:
   schedule:
-    # 每天台灣時間 18:00 執行
-    # 台灣時間 18:00 = UTC 10:00（UTC+8）
-    # cron 格式：分 時 日 月 星期
-    - cron: '0 10 * * *'
+    # 台灣時間 16:30 = UTC 08:30
+    - cron: '30 8 * * *'
   workflow_dispatch:  # 允許手動觸發
 
 jobs:
-  fetch-and-send:
+  fetch:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    
+
     steps:
     - name: 檢出程式碼
       uses: actions/checkout@v4
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-    
+
     - name: 設定 Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
-    
-    - name: 檢查 Secrets
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      run: |
-        if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
-          echo "::warning::TELEGRAM_BOT_TOKEN 未設定，將使用 config 預設值"
-          echo "建議到 Settings > Secrets and variables > Actions 新增 TELEGRAM_BOT_TOKEN"
-        else
-          echo "TELEGRAM_BOT_TOKEN 已設定"
-        fi
-        if [ -z "${{ secrets.TELEGRAM_CHAT_ID }}" ] && [ -z "${{ secrets.TELEGRAM_CHAT_IDS }}" ]; then
-          echo "::warning::TELEGRAM_CHAT_ID 與 TELEGRAM_CHAT_IDS 皆未設定"
-          echo "將嘗試從 getUpdates 自動取得，或需在 config 設定 TELEGRAM_CHAT_IDS"
-        fi
-    
+
     - name: 安裝依賴
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-    
+
     - name: 安裝 Chrome（GitHub Actions 專用）
       id: setup-chrome
       uses: browser-actions/setup-chrome@v2
@@ -52,18 +35,20 @@ jobs:
         chrome-version: stable
         install-chromedriver: true
         install-dependencies: true
-    
-    - name: 執行抓取和發送
+
+    - name: 隨機延遲（防止固定時間被偵測）
+      run: |
+        DELAY=$((RANDOM % 600 + 60))
+        echo "隨機等待 ${DELAY} 秒（共 $(( DELAY / 60 )) 分 $(( DELAY % 60 )) 秒）..."
+        sleep $DELAY
+
+    - name: 執行抓取
       env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
-        TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
         CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
         CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
-      run: python main.py --now
-    
-    - name: 提交 holdings 數據（每日儲存到 repo）
+      run: python main.py --fetch-only
+
+    - name: 提交 holdings 數據到 repo
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -76,12 +61,11 @@ jobs:
           echo "無新數據需提交"
         fi
       continue-on-error: true
-    
-    - name: 上傳數據檔案（如果有的話）
+
+    - name: 上傳數據備份
       uses: actions/upload-artifact@v4
       if: always()
       with:
         name: holdings-data
-        path: |
-          holdings_data*.json
+        path: holdings_data*.json
         retention-days: 30

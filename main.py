@@ -44,14 +44,15 @@ def _get_scraper_modules():
         return fetch_holdings_selenium, load_previous_holdings, save_holdings, compare_holdings, format_report, format_today_holdings, send_to_telegram
 
 def send_to_all_chats(msg_today, report_compare, bot_token, chat_ids, send_to_telegram_fn):
-    """發送訊息到所有聊天室和群組（可指定群組內 Topic）。"""
+    """發送訊息到所有聊天室和群組（含隨機傳送順序、間隔延遲，降低被 Telegram 偵測風險）。"""
+    import random, time as _time
     try:
         from config import get_message_thread_id
         thread_id = get_message_thread_id()
     except ImportError:
         thread_id = None
+
     if not chat_ids:
-        # 若沒設定，嘗試自動取得最後一個對話的 chat_id
         for cid in [None]:
             ok1 = send_to_telegram_fn(msg_today, bot_token, cid, thread_id)
             ok2 = send_to_telegram_fn(report_compare, bot_token, cid, thread_id)
@@ -59,9 +60,25 @@ def send_to_all_chats(msg_today, report_compare, bot_token, chat_ids, send_to_te
                 return True
         print("[!] 無法取得 chat_id，請在 config.py 設定 TELEGRAM_CHAT_IDS 或 TELEGRAM_CHAT_ID")
         return False
+
+    # 多個目標時打亂傳送順序，避免每次以固定順序傳送
+    shuffled_ids = list(chat_ids)
+    if len(shuffled_ids) > 1:
+        random.shuffle(shuffled_ids)
+        print(f"[i] 傳送順序隨機排列，共 {len(shuffled_ids)} 個目標")
+
     all_ok = True
-    for cid in chat_ids:
+    for idx, cid in enumerate(shuffled_ids):
+        # 切換不同目標之間加入隨機停頓（4～12 秒）
+        if idx > 0:
+            inter_wait = random.uniform(4.0, 12.0)
+            print(f"[i] 切換下一個目標，隨機等待 {inter_wait:.1f} 秒...")
+            _time.sleep(inter_wait)
+
         ok1 = send_to_telegram_fn(msg_today, bot_token, cid, thread_id)
+        # 同一目標兩則訊息之間隨機停頓（3～8 秒），模擬人工停頓
+        msg_wait = random.uniform(3.0, 8.0)
+        _time.sleep(msg_wait)
         ok2 = send_to_telegram_fn(report_compare, bot_token, cid, thread_id)
         if not (ok1 and ok2):
             all_ok = False
@@ -187,40 +204,42 @@ def fetch_and_send():
         print("[i] 抓取失敗，跳過發送")
 
 def run_scheduler():
-    """執行排程器：18:00 抓資料，18:30 發訊息到所有聊天室和群組"""
-    schedule.every().day.at("18:00").do(fetch_data_only)
-    schedule.every().day.at("18:30").do(send_messages_only)
-    
+    """執行排程器：16:30 抓資料，17:00 發訊息到所有聊天室和群組"""
+    schedule.every().day.at("16:30").do(fetch_data_only)
+    schedule.every().day.at("17:00").do(send_messages_only)
+
     print("="*60)
     print("00981A ETF 自動追蹤系統已啟動")
     print("="*60)
     print(f"啟動時間（台灣）: {_now_taiwan().strftime('%Y-%m-%d %H:%M:%S')}")
     print("排程設定:")
-    print("  18:00 - 抓取持股數據並儲存")
-    print("  18:30 - 發送持股明細與變化報告到所有聊天室/群組")
+    print("  16:30 - 抓取持股數據並儲存")
+    print("  17:00 - 發送持股明細與變化報告到所有聊天室/群組")
     print("="*60)
     print("\n提示: 按 Ctrl+C 可停止程式\n")
-    
-    # 持續運行排程
+
     while True:
         schedule.run_pending()
-        time.sleep(60)  # 每分鐘檢查一次
+        time.sleep(60)
 
 def main():
-    """主函數：可選擇立即執行或啟動排程器"""
+    """主函數：可選擇立即執行、僅抓取、僅發送或啟動排程器"""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='00981A ETF 持股變化追蹤')
-    parser.add_argument('--now', action='store_true', help='立即執行一次（不啟動排程器）')
-    parser.add_argument('--schedule', action='store_true', default=True, help='啟動排程器（每天18:00抓取、18:30發送）')
-    
+    parser.add_argument('--now', action='store_true', help='立即抓取並發送（本機測試用）')
+    parser.add_argument('--fetch-only', action='store_true', help='僅抓取並儲存持股數據（16:30 使用）')
+    parser.add_argument('--send-only', action='store_true', help='僅讀取已儲存數據並發送報告（17:00 使用）')
+
     args = parser.parse_args()
-    
-    if args.now:
-        # 立即執行一次
+
+    if args.fetch_only:
+        fetch_data_only()
+    elif args.send_only:
+        send_messages_only()
+    elif args.now:
         fetch_and_send()
     else:
-        # 啟動排程器
         try:
             run_scheduler()
         except KeyboardInterrupt:
