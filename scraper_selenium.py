@@ -780,7 +780,8 @@ def send_to_telegram(message, bot_token, chat_id=None, message_thread_id=None):
             _time.sleep(base_delay + jitter)
 
         data = {"chat_id": chat_id, "text": chunk}
-        if message_thread_id is not None:
+        # Topic（message_thread_id）只對群組有效（群組 chat_id 為負數），私聊不帶此欄位
+        if message_thread_id is not None and isinstance(chat_id, int) and chat_id < 0:
             data["message_thread_id"] = int(message_thread_id)
 
         # ── 層級三：Rate Limit 退避重試（最多 3 次，指數 + 隨機抖動）──
