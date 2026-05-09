@@ -88,6 +88,11 @@ def _date_str(dt):
     """統一日期格式：YYYY/M/D"""
     return f"{dt.year}/{dt.month}/{dt.day}"
 
+def _is_weekend_taiwan(dt=None):
+    """台灣時間是否為週六、週日（datetime.weekday：週一 0 … 週日 6）。"""
+    t = dt if dt is not None else _now_taiwan()
+    return t.weekday() >= 5
+
 def fetch_data_only():
     """18:00 執行：只抓取數據並儲存，不發送訊息。成功回傳 True，失敗回傳 False。"""
     today = _now_taiwan()
@@ -154,6 +159,12 @@ def send_messages_only():
     print("[18:30] 00981A 發送持股報告")
     print("="*60)
     print(f"執行時間（台灣）: {today.strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+    if _is_weekend_taiwan(today):
+        wname = "週六" if today.weekday() == 5 else "週日"
+        print(f"[i] {wname}不發送 Telegram 持股報告，略過。\n")
+        print("="*60 + "\n")
+        return
     
     try:
         from config import TELEGRAM_BOT_TOKEN, get_chat_ids

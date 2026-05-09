@@ -19,7 +19,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", None)
 # 取得 Chat ID：1) 私聊：對 Bot 發訊息後執行 get_chat_id.py
 #              2) 群組：將 Bot 加入群組後，在群組發一則訊息，執行 get_chat_id.py
 # 這裡預設加入固定群組 ID（可被 setup_chats 等工具覆寫此行）
-TELEGRAM_CHAT_IDS = "-1002890383818"
+TELEGRAM_CHAT_IDS = "-6644792281,-1002890383818"
 
 
 def _parse_chat_ids_csv(s):
