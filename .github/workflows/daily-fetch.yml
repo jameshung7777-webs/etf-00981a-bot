@@ -98,6 +98,7 @@ jobs:
     # ── 執行主程式 ────────────────────────────────────
     - name: 執行
       env:
+        SKIP_WEEKEND_SEND: ${{ secrets.SKIP_WEEKEND_SEND }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}

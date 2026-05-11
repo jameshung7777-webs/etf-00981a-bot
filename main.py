@@ -93,6 +93,13 @@ def _is_weekend_taiwan(dt=None):
     t = dt if dt is not None else _now_taiwan()
     return t.weekday() >= 5
 
+
+def _skip_send_on_weekend():
+    """是否略過週末發送。環境變數 SKIP_WEEKEND_SEND：未設或 1/true 則略過；設 0/false/no 則週末仍發。"""
+    import os
+    v = (os.getenv("SKIP_WEEKEND_SEND") or "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
 def fetch_data_only():
     """18:00 執行：只抓取數據並儲存，不發送訊息。成功回傳 True，失敗回傳 False。"""
     today = _now_taiwan()
@@ -160,9 +167,10 @@ def send_messages_only():
     print("="*60)
     print(f"執行時間（台灣）: {today.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
-    if _is_weekend_taiwan(today):
-        wname = "週六" if today.weekday() == 5 else "週日"
-        print(f"[i] {wname}不發送 Telegram 持股報告，略過。\n")
+    if _skip_send_on_weekend() and _is_weekend_taiwan(today):
+        wname = ("週一", "週二", "週三", "週四", "週五", "週六", "週日")[today.weekday()]
+        print(f"[i] 今日為 {wname}（台灣 {today.strftime('%Y-%m-%d')}），依設定不發送 Telegram；略過。")
+        print("[i] 若要在週末也發送：設定環境變數 SKIP_WEEKEND_SEND=0（GitHub Actions 可在 workflow env 加入）\n")
         print("="*60 + "\n")
         return
     
