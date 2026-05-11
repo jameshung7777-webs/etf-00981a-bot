@@ -1,22 +1,17 @@
-name: 00981A ETF 每日排程
+# 僅負責抓取並提交 JSON（台灣 16:30 = UTC 08:30）
+# 與發送分檔，避免多個 schedule 時無法辨識 cron 而兩趟都變成 fetch-only
+name: 00981A ETF 每日抓取
 
 on:
   schedule:
-    # 台灣 16:30 = UTC 08:30 → 抓取
     - cron: '30 8 * * *'
-    # 台灣 17:00 = UTC 09:00 → 發送
-    - cron: '0 9 * * *'
   workflow_dispatch:
     inputs:
-      mode:
-        description: '手動執行模式'
-        required: true
-        default: 'all'
-        type: choice
-        options:
-          - fetch-only
-          - send-only
-          - all
+      full_pipeline:
+        description: '抓取後立刻發送（等同 python main.py --now）'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   run:
@@ -25,51 +20,6 @@ jobs:
       contents: write
 
     steps:
-    # ── 判斷本次要跑「抓取」還是「發送」 ──────────────
-    # 說明：${{ github.event.schedule }} 在部分 runner 上會為空，改從 GITHUB_EVENT_PATH 用 jq 讀取
-    - name: 判斷執行模式
-      id: mode
-      run: |
-        set -e
-        # workflow_dispatch：用手動選項
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
-          echo "trigger=workflow_dispatch" >> "$GITHUB_OUTPUT"
-          exit 0
-        fi
-
-        SCHEDULE=""
-        if [ -n "${GITHUB_EVENT_PATH:-}" ] && [ -f "$GITHUB_EVENT_PATH" ]; then
-          SCHEDULE=$(jq -r '.schedule // empty' "$GITHUB_EVENT_PATH" 2>/dev/null || true)
-        fi
-        if [ -z "$SCHEDULE" ]; then
-          SCHEDULE="${{ github.event.schedule }}"
-        fi
-        echo "cron=$SCHEDULE" >> "$GITHUB_OUTPUT"
-
-        case "$SCHEDULE" in
-          "30 8 * * *")
-            echo "mode=fetch-only" >> "$GITHUB_OUTPUT"
-            echo "trigger=schedule_fetch" >> "$GITHUB_OUTPUT"
-            ;;
-          "0 9 * * *")
-            echo "mode=send-only" >> "$GITHUB_OUTPUT"
-            echo "trigger=schedule_send" >> "$GITHUB_OUTPUT"
-            ;;
-          *)
-            echo "::warning::無法辨識 cron='$SCHEDULE'，使用 fallback（請檢查 workflow）"
-            echo "mode=fetch-only" >> "$GITHUB_OUTPUT"
-            echo "trigger=unknown_fallback_fetch" >> "$GITHUB_OUTPUT"
-            ;;
-        esac
-
-    - name: 顯示執行模式
-      run: |
-        echo "▶ 本次模式：${{ steps.mode.outputs.mode }}"
-        echo "▶ cron：${{ steps.mode.outputs.cron }}"
-        echo "▶ trigger：${{ steps.mode.outputs.trigger }}"
-
-    # ── 環境準備 ──────────────────────────────────────
     - name: 檢出程式碼
       uses: actions/checkout@v4
       with:
@@ -85,18 +35,15 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    # Chrome 只在「抓取」時才需要
-    - name: 安裝 Chrome（抓取模式）
+    - name: 安裝 Chrome（抓取需要）
       id: setup-chrome
-      if: steps.mode.outputs.mode != 'send-only'
       uses: browser-actions/setup-chrome@v2
       with:
         chrome-version: stable
         install-chromedriver: true
         install-dependencies: true
 
-    # ── 執行主程式 ────────────────────────────────────
-    - name: 執行
+    - name: 執行抓取（或抓取+發送）
       env:
         SKIP_WEEKEND_SEND: ${{ secrets.SKIP_WEEKEND_SEND }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -106,17 +53,15 @@ jobs:
         CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
         CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
       run: |
-        MODE="${{ steps.mode.outputs.mode }}"
-        echo "執行 python main.py，MODE=$MODE"
-        if [ "$MODE" = "all" ]; then
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.full_pipeline }}" = "true" ]; then
+          echo "▶ 模式：--now（抓取並發送）"
           python main.py --now
         else
-          python main.py "--${MODE}"
+          echo "▶ 模式：fetch-only（固定）"
+          python main.py --fetch-only
         fi
 
-    # ── 儲存 JSON（只在抓取後執行）；push 前先 pull --rebase 避免被拒絕 ──
     - name: 提交 holdings JSON 到 repo
-      if: steps.mode.outputs.mode != 'send-only'
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -143,7 +88,7 @@ jobs:
 
     - name: 上傳數據備份
       uses: actions/upload-artifact@v4
-      if: always() && steps.mode.outputs.mode != 'send-only'
+      if: always()
       with:
         name: holdings-data
         path: holdings_data*.json
