@@ -315,6 +315,25 @@ def load_previous_holdings(data_file=None, current_date_str=None):
     if current_d is None:
         current_d = now_tw.date()
 
+    _fn_re = re.compile(r"holdings_data_(\d{4})-(\d{2})-(\d{2})_(\d+)\.json$")
+
+    def _path_file_date_time(path):
+        m = _fn_re.search(os.path.basename(path))
+        if not m:
+            return None
+        y, mo, d, hhmm = map(int, m.groups())
+        return datetime(y, mo, d).date(), hhmm
+
+    def _finalize(raw, chosen_path, force_same_day=False):
+        out = _clean_payload(raw)
+        if not out:
+            return None
+        print(f"[i] 持股變化比較基準：{os.path.basename(chosen_path)}（{raw.get('date')}）")
+        if force_same_day:
+            out = dict(out)
+            out["_force_compare_with_today"] = True
+        return out
+
     paths = glob.glob(os.path.join(base_dir, "holdings_data_*.json"))
     hj = os.path.join(base_dir, "holdings_data.json")
     if os.path.isfile(hj):
@@ -334,19 +353,59 @@ def load_previous_holdings(data_file=None, current_date_str=None):
             continue
         candidates.append((d, path, data))
 
-    if not candidates:
-        return None
+    if candidates:
+        max_d = max(c[0] for c in candidates)
+        same_day = [c for c in candidates if c[0] == max_d]
+        _, chosen_path, raw = max(same_day, key=lambda c: c[1])
+        try:
+            return _finalize(raw, chosen_path, False)
+        except Exception as e:
+            print(f"載入歷史數據時發生錯誤: {e}")
+            return None
 
-    max_d = max(c[0] for c in candidates)
-    same_day = [c for c in candidates if c[0] == max_d]
-    _, chosen_path, raw = max(same_day, key=lambda c: c[1])
+    # ── Fallback：JSON 內 date 全是「今天」或清單內無嚴格早於今日時，改依「檔名」 holdings_data_YYYY-MM-DD_HHMM.json
+    dated_paths = [
+        p
+        for p in glob.glob(os.path.join(base_dir, "holdings_data_*.json"))
+        if _path_file_date_time(p)
+    ]
+    fd_prev = []
+    for path in dated_paths:
+        fd, hhmm = _path_file_date_time(path)
+        if fd < current_d:
+            fd_prev.append((fd, hhmm, path))
+    if fd_prev:
+        fd_prev.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        _, _, path = fd_prev[0]
+        try:
+            with open(path, encoding="utf-8") as f:
+                raw = json.load(f)
+            print("[i] 提示：以檔名日期選出基準（JSON 內 date 未早於今日之可用檔）")
+            return _finalize(raw, path, False)
+        except Exception as e:
+            print(f"載入歷史數據時發生錯誤: {e}")
+            return None
 
-    try:
-        print(f"[i] 持股變化比較基準：{os.path.basename(chosen_path)}（{raw.get('date')}）")
-        return _clean_payload(raw)
-    except Exception as e:
-        print(f"載入歷史數據時發生錯誤: {e}")
-        return None
+    # ── 同日第二新快照：今天跑兩趟以上、檔名皆為今日且 JSON date 同為今日時，取 HHMM 次新一檔與 holdings_data.json 比
+    same_fname_day = []
+    for path in dated_paths:
+        fd, hhmm = _path_file_date_time(path)
+        if fd == current_d:
+            same_fname_day.append((hhmm, path))
+    same_fname_day.sort(reverse=True)
+    if len(same_fname_day) >= 2:
+        _, path = same_fname_day[1]
+        try:
+            with open(path, encoding="utf-8") as f:
+                raw = json.load(f)
+            print("[i] 提示：使用同日「次新」快照與最新 holdings_data.json 比較持股變化")
+            return _finalize(raw, path, True)
+        except Exception as e:
+            print(f"載入歷史數據時發生錯誤: {e}")
+            return None
+
+    print("[i] 找不到可對照的歷史持股檔（需：JSON date 早於今日、或檔名日期早於今日、或同日至少兩個 *_HHMM.json）")
+    return None
 
 def save_holdings(holdings, date_str, data_file=None):
     """保存當前持股數據。會寫入：帶日期時間的檔案 + holdings_data.json（供下次比較用）"""

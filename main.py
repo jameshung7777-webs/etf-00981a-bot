@@ -101,6 +101,30 @@ def _date_str(dt):
     """統一日期格式：YYYY/M/D"""
     return f"{dt.year}/{dt.month}/{dt.day}"
 
+def _parse_slash_date_main(s):
+    """與持股 JSON 的 date 欄位相同格式之解析（用於是否要做變化比較）。"""
+    if not s:
+        return None
+    parts = str(s).strip().replace("-", "/").split("/")
+    if len(parts) >= 3:
+        try:
+            return datetime(int(parts[0]), int(parts[1]), int(parts[2])).date()
+        except (ValueError, TypeError):
+            return None
+    return None
+
+def _should_compare_holdings_diff(previous_data, today_str):
+    """前一檔業務日嚴格早於今日，或為同日「次新」強制比對時，才跑 compare。"""
+    if not previous_data:
+        return False
+    if previous_data.get("_force_compare_with_today"):
+        return True
+    d_prev = _parse_slash_date_main(previous_data.get("date"))
+    d_curr = _parse_slash_date_main(today_str)
+    if d_prev and d_curr:
+        return d_prev < d_curr
+    return (previous_data.get("date") or "") != (today_str or "")
+
 def _is_weekend_taiwan(dt=None):
     """台灣時間是否為週六、週日（datetime.weekday：週一 0 … 週日 6）。"""
     t = dt if dt is not None else _now_taiwan()
@@ -212,12 +236,22 @@ def send_messages_only():
     
     previous_data = load_prev(current_date_str=today_str)
     msg_today = format_today(current_holdings, today_str)
-    
-    if previous_data and previous_data.get("date") != today_str:
-        changes = compare_fn(current_holdings, previous_data)
-        report_compare = format_report(changes, previous_data["date"], today_str)
+
+    if _should_compare_holdings_diff(previous_data, today_str):
+        prev_plain = {k: v for k, v in previous_data.items() if not str(k).startswith("_")}
+        changes = compare_fn(current_holdings, prev_plain)
+        if changes is not None:
+            report_compare = format_report(changes, prev_plain.get("date", ""), today_str)
+        else:
+            report_compare = (
+                f"00981A 持股更新（{yesterday_str} → {today_str}）\n\n（無法產生變化比較）\n\n" + msg_today
+            )
     else:
-        report_compare = f"00981A 持股更新（{yesterday_str} → {today_str}）\n\n（無前日資料可比較）\n\n" + msg_today
+        if not previous_data:
+            print("[i] 無歷史快照可比較（請確認 repo 內有 holdings_data_*.json，且業務日早於今日或同日至少兩筆時間檔）。")
+        report_compare = (
+            f"00981A 持股更新（{yesterday_str} → {today_str}）\n\n（無前日資料可比較）\n\n" + msg_today
+        )
     
     if not bot_token:
         print("[FAIL] 未設定 Telegram Bot Token\n")
