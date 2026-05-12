@@ -511,15 +511,18 @@ def main():
             print(report)
             print("=" * 50 + "\n")
             import os
-            bot_token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+            try:
+                from config import get_telegram_bot_token
+                bot_token = get_telegram_bot_token()
+            except ImportError:
+                bot_token = None
             if not bot_token:
-                try:
-                    from config import TELEGRAM_BOT_TOKEN as _t
-                    bot_token = (_t or "").strip() if _t else ""
-                except ImportError:
-                    pass
+                for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_TOKEN", "BOT_TOKEN"):
+                    bot_token = (os.getenv(k) or "").strip() or None
+                    if bot_token:
+                        break
             if not bot_token:
-                print("[!] 未設定 TELEGRAM_BOT_TOKEN，略過發送")
+                print("[!] 未設定 Bot Token（TELEGRAM_BOT_TOKEN 等），略過發送")
             else:
                 send_to_telegram(report, bot_token)
     else:

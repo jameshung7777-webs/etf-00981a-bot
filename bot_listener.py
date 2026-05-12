@@ -1,7 +1,7 @@
 """
 00981A 訂閱機器人
 監聽 /start 指令，自動將使用者的 Chat ID 加入訂閱名單
-每天 18:30 會自動發送持股報告到所有已訂閱的聊天室/群組
+持股報告由 main / GitHub Actions 排程發送（台灣約 17:00）
 """
 
 import sys
@@ -18,13 +18,24 @@ if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
         pass
 
 try:
-    from config import TELEGRAM_BOT_TOKEN
+    from config import get_telegram_bot_token
 except ImportError:
-    TELEGRAM_BOT_TOKEN = None
+    get_telegram_bot_token = None
 
-if not TELEGRAM_BOT_TOKEN:
-    import os
-    TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip() or None
+
+def _resolve_bot_token():
+    if get_telegram_bot_token:
+        t = get_telegram_bot_token()
+        if t:
+            return t
+    for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_TOKEN", "BOT_TOKEN"):
+        t = (os.getenv(k) or "").strip()
+        if t:
+            return t
+    return None
+
+
+TELEGRAM_BOT_TOKEN = _resolve_bot_token()
 
 SUBSCRIBED_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "subscribed_chats.json")
 

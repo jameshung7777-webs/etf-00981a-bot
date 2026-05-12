@@ -8,10 +8,21 @@ import os
 import json
 
 
+# 依序嘗試（與 GitHub Actions workflow 的 secrets 後援名稱對齊）
+_TELEGRAM_TOKEN_ENV_KEYS = (
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_TOKEN",
+    "BOT_TOKEN",
+)
+
+
 def get_telegram_bot_token():
-    """從環境變數讀取 Bot Token（每次呼叫重新讀取；發送前請用此函式，勿依賴過期的 import 快照）。"""
-    t = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
-    return t or None
+    """從環境變數讀取 Bot Token（每次呼叫重新讀取；發送前請用此函式）。"""
+    for key in _TELEGRAM_TOKEN_ENV_KEYS:
+        t = (os.getenv(key) or "").strip()
+        if t:
+            return t
+    return None
 
 
 # Telegram Bot Token（模組載入時快照，相容舊程式 `from config import TELEGRAM_BOT_TOKEN`）

@@ -116,13 +116,16 @@ def main():
     # ── 讀取 token ──────────────────────────────────
     try:
         import config
-        token = (config.TELEGRAM_BOT_TOKEN or "").strip() if config.TELEGRAM_BOT_TOKEN else ""
+        token = (config.get_telegram_bot_token() or "").strip()
     except Exception:
         token = ""
     if not token:
-        token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+        for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_TOKEN", "BOT_TOKEN"):
+            token = (os.getenv(k) or "").strip()
+            if token:
+                break
     if not token:
-        print("\n  [FAIL] 找不到 TELEGRAM_BOT_TOKEN（請設環境變數或 config.py，勿提交真 token 至公開 repo）")
+        print("\n  [FAIL] 找不到 Bot Token（請設環境變數 TELEGRAM_BOT_TOKEN / TELEGRAM_TOKEN / BOT_TOKEN，勿提交真 token 至公開 repo）")
         sys.exit(1)
 
     ok, info = get_bot_info(token)

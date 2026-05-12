@@ -36,17 +36,14 @@ jobs:
     - name: 發送持股報告
       env:
         SKIP_WEEKEND_SEND: ${{ secrets.SKIP_WEEKEND_SEND }}
-        _T_MAIN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        _T_ALT: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_TOKEN || secrets.BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
         TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
         TELEGRAM_CHAT_TOPIC_IDS_JSON: ${{ secrets.TELEGRAM_CHAT_TOPIC_IDS_JSON }}
       run: |
-        export TELEGRAM_BOT_TOKEN="${_T_MAIN:-${_T_ALT}}"
-        unset _T_MAIN _T_ALT
         if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
-          echo "::error::找不到 Bot Token。請在 Actions **Secrets**（非 Variables）新增 TELEGRAM_BOT_TOKEN，或備用名 TELEGRAM_TOKEN。若放在 Environment secrets，請在本 job 加上 environment: <環境名>。"
+          echo "::error::找不到 Bot Token。請在 Actions → Secrets 建立 TELEGRAM_BOT_TOKEN（或 TELEGRAM_TOKEN / BOT_TOKEN）；勿放在 Variables。若 secrets 放在 GitHub Environment，請在本 job 加上 environment: <環境名>。說明：https://docs.github.com/actions/security-guides/using-secrets-in-github-actions"
           exit 1
         fi
         echo "▶ 模式：send-only（固定）"

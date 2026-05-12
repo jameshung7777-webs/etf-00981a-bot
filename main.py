@@ -222,7 +222,11 @@ def send_messages_only():
         chat_ids = get_chat_ids()
     except ImportError:
         import os
-        bot_token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip() or None
+        bot_token = None
+        for _k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_TOKEN", "BOT_TOKEN"):
+            bot_token = (os.getenv(_k) or "").strip() or None
+            if bot_token:
+                break
         chat_ids = []
     
     _, load_prev, _, compare_fn, format_report, format_today, send_fn = _get_scraper_modules()
@@ -269,11 +273,10 @@ def send_messages_only():
             )
     
     if not bot_token:
-        print("[FAIL] 未設定 Telegram Bot Token（程式讀不到環境變數 TELEGRAM_BOT_TOKEN）\n")
+        print("[FAIL] 未設定 Telegram Bot Token（程式讀不到任一環境變數：TELEGRAM_BOT_TOKEN / TELEGRAM_TOKEN / BOT_TOKEN）\n")
         print("[i] GitHub Actions：請到本倉庫 Settings → Secrets and variables → **Actions** → **Secrets**")
-        print("    新增名稱完全符合的 TELEGRAM_BOT_TOKEN；若曾誤用「Variables」分頁，workflow 讀不到。")
-        print("[i] 若 token 放在 **Environments** 的 secrets，請在 workflow 的 job 加上：environment: <你的環境名稱>。")
-        print("[i] 亦可新增備用 secret 名稱 TELEGRAM_TOKEN（與 TELEGRAM_BOT_TOKEN 擇一即可，workflow 會自動合併）。")
+        print("    新增 TELEGRAM_BOT_TOKEN（勿放在 Variables）；若 token 放在 **Environments**，請在 workflow 的 job 加上 environment: <環境名>。")
+        print("[i] 說明：https://docs.github.com/actions/security-guides/using-secrets-in-github-actions")
         print("="*60 + "\n")
         return False
 

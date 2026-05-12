@@ -4,9 +4,9 @@ Telegram Bot Token 快速復原工具
 當 Bot 被刪除或 Token 被撤銷時，執行此腳本即可：
   1. 輸入新 Token
   2. 自動驗證 Token 是否有效
-  3. 更新 config.py
+  3. 確認本機不再於 config.py 存放 token（改由 Secret／環境變數）
   4. 嘗試更新 GitHub Secret（需安裝 gh CLI）
-  5. 推送到 GitHub
+  5. 若有變更則推送到 GitHub
   6. 發送測試訊息確認恢復
 
 用法：
@@ -20,7 +20,6 @@ import re
 import subprocess
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.path.join(BASE_DIR, "config.py")
 
 # ──────────────────────────────────────────────
 # 工具函式
@@ -56,34 +55,9 @@ def test_token_api(token: str):
         return False, str(e)
 
 def update_config_file(new_token: str) -> bool:
-    """替換 config.py 中的 hardcode token"""
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        # 匹配目前格式：TELEGRAM_BOT_TOKEN = (_t or "").strip() or "舊token"
-        new_content, n = re.subn(
-            r'(TELEGRAM_BOT_TOKEN\s*=\s*\(_t\s*or\s*""\)\.strip\(\)\s*or\s*")[^"]*(")',
-            rf'\g<1>{new_token}\g<2>',
-            content
-        )
-        if n == 0:
-            print("  [!] 找不到 Token 樣板，嘗試備用替換...")
-            # 備用：直接搜尋舊 Token 字串
-            new_content = re.sub(
-                r'(?<=or ")[\d]+:[A-Za-z0-9_-]+(?=")',
-                new_token,
-                content
-            )
-            if new_content == content:
-                return False
-
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        return True
-    except Exception as e:
-        print(f"  [!] 更新 config.py 失敗: {e}")
-        return False
+    """舊版曾把 token 寫入 config.py；目前改為僅由環境變數／GitHub Secret 提供，不修改檔案。"""
+    print("  [i] 已不再把 Bot Token 寫入 config.py（避免誤提交）；請以 GitHub Actions Secret 或本機環境變數 TELEGRAM_BOT_TOKEN 設定。")
+    return True
 
 def update_github_secret(new_token: str):
     """
@@ -102,20 +76,27 @@ def update_github_secret(new_token: str):
         return False
 
 def push_to_github() -> bool:
-    """git add config.py → commit → pull --rebase → push"""
+    """git add config.py → commit → pull --rebase → push（無變更則略過）"""
     try:
         subprocess.run(["git", "add", "config.py"], check=True, cwd=BASE_DIR)
+        chk = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=BASE_DIR)
+        if chk.returncode == 0:
+            print("  [i] config.py 無變更，略過 commit / push")
+            return True
         subprocess.run(
             ["git", "commit", "-m", "緊急復原：更換 Bot Token"],
-            check=True, cwd=BASE_DIR
+            check=True,
+            cwd=BASE_DIR
         )
         subprocess.run(
             ["git", "pull", "origin", "main", "--rebase"],
-            check=True, cwd=BASE_DIR
+            check=True,
+            cwd=BASE_DIR
         )
         subprocess.run(
             ["git", "push", "origin", "main"],
-            check=True, cwd=BASE_DIR
+            check=True,
+            cwd=BASE_DIR
         )
         return True
     except subprocess.CalledProcessError as e:
@@ -125,19 +106,19 @@ def push_to_github() -> bool:
 def send_test_message(new_token: str):
     """讀取 config 取得目標群組，發送一則「已恢復」測試訊息"""
     try:
-        import requests, importlib, sys as _sys
+        import requests
+        import sys as _sys
 
-        # 強制重新載入 config（因為已修改 config.py）
         for mod in list(_sys.modules.keys()):
-            if mod in ("config",):
+            if mod == "config":
                 del _sys.modules[mod]
 
         _sys.path.insert(0, BASE_DIR)
         import config
 
-        chat_ids    = config.get_chat_ids()
-        url         = f"https://api.telegram.org/bot{new_token}/sendMessage"
-        text        = "✅ Bot Token 已成功更換，系統已恢復正常運作！"
+        chat_ids = config.get_chat_ids()
+        url = f"https://api.telegram.org/bot{new_token}/sendMessage"
+        text = "✅ Bot Token 已成功更換，系統已恢復正常運作！"
 
         if not chat_ids:
             print("  [!] 找不到 chat_id，跳過測試發送")
@@ -167,13 +148,13 @@ def main():
     print("步驟：")
     print("  1. 到 BotFather 取得新 Token")
     print("  2. 在下方貼上新 Token")
-    print("  3. 工具會自動驗證、更新並推送到 GitHub")
+    print("  3. 工具會自動驗證、更新 GitHub Secret，必要時推送")
     print()
 
     # ── 輸入 Token ──
     if len(sys.argv) > 1:
         new_token = sys.argv[1].strip()
-        print(f"使用命令列傳入的 Token")
+        print("使用命令列傳入的 Token")
     else:
         print("請貼上新的 Bot Token（格式：123456789:AABBCC...）：")
         new_token = input("Token > ").strip()
@@ -201,13 +182,10 @@ def main():
         if cont != "y":
             sys.exit(1)
 
-    # ── 更新 config.py ──
-    _print_sep("步驟 1：更新 config.py")
+    # ── 說明：本機 config 不再存 token ──
+    _print_sep("步驟 1：本機 config（說明）")
     if update_config_file(new_token):
-        print("[OK] config.py 已更新")
-    else:
-        print("[!] 自動更新失敗，請手動將 config.py 第 12 行的 Token 改為新值後再繼續")
-        input("按 Enter 繼續...")
+        print("[OK] 已確認本機設定流程（Token 請以 Secret／環境變數提供）")
 
     # ── 更新 GitHub Secret ──
     _print_sep("步驟 2：更新 GitHub Secret")
@@ -224,7 +202,7 @@ def main():
     # ── Git push ──
     _print_sep("步驟 3：推送 config.py 到 GitHub")
     if push_to_github():
-        print("[OK] 已推送到 GitHub main 分支")
+        print("[OK] 已推送到 GitHub main 分支（或已略過無變更）")
     else:
         print("[!] 推送失敗，請手動執行：")
         print("    git add config.py")

@@ -20,12 +20,16 @@ def _token():
         t = get_telegram_bot_token()
         if t:
             return t
-    return (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip() or None
+    for k in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_TOKEN", "BOT_TOKEN"):
+        t = (os.getenv(k) or "").strip()
+        if t:
+            return t
+    return None
 
 def main():
     token = _token()
     if not token:
-        print("未設定 TELEGRAM_BOT_TOKEN。請在環境變數或 config.py 設定（勿將含真 token 的 config 提交至公開 repo）。")
+        print("未偵測到 Bot Token。請設環境變數 TELEGRAM_BOT_TOKEN（或 TELEGRAM_TOKEN / BOT_TOKEN）。")
         return
     url = f"https://api.telegram.org/bot{token}/getUpdates"
     print("正在取得最近與 Bot 的對話...")

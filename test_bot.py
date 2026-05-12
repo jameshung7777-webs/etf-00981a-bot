@@ -26,7 +26,7 @@ print(SEP)
 # ── 讀取 config ───────────────────────────────────────
 try:
     import config
-    token     = config.TELEGRAM_BOT_TOKEN
+    token     = config.get_telegram_bot_token()
     chat_ids  = config.get_chat_ids()
     print(f"\n  Token     : {(token[:10] + '...' + token[-6:]) if token and len(token) > 16 else (token or '（未設定）')}")
     print(f"  Chat IDs  : {chat_ids}")
@@ -40,7 +40,7 @@ except Exception as e:
     sys.exit(1)
 
 if not token:
-    print("  [FAIL] TELEGRAM_BOT_TOKEN 未設定。請設環境變數 TELEGRAM_BOT_TOKEN 或在 config 中設定（勿提交真 token 至公開 repo）。")
+    print("  [FAIL] 未偵測到 Bot Token。請設環境變數 TELEGRAM_BOT_TOKEN（或 TELEGRAM_TOKEN / BOT_TOKEN）。")
     sys.exit(1)
 print(f"\n{SEP}")
 print("  1. 驗證 Bot Token")
