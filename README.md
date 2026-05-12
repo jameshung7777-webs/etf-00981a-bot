@@ -135,7 +135,7 @@ python main.py
 - `holdings_data.json` - 保存的持股數據（自動生成）
 - `requirements.txt` - Python 依賴列表
 - `run.bat` - Windows 快速啟動腳本
-- `.github/workflows/daily-fetch.yml` - GitHub Actions 工作流程
+- `.github/workflows/daily-pipeline.yml` - GitHub Actions 每日流程（抓取、提交 JSON、發送）
 - `GitHub設定指南.md` - GitHub Actions 詳細設定說明
 - `使用說明.md` - 完整使用說明
 - `快速開始.md` - 快速參考指南

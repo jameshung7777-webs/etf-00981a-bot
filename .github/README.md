@@ -29,5 +29,5 @@
 ## 注意事項
 
 - 工作流程使用 UTC 時間，台灣時間 18:00 = UTC 10:00
-- 如需修改執行時間，編輯 `.github/workflows/daily-fetch.yml` 中的 cron 設定
+- 如需修改執行時間，編輯 `.github/workflows/daily-pipeline.yml` 中的 cron 設定
 - 確保 Secrets 已正確設定，否則 Telegram 通知會失敗

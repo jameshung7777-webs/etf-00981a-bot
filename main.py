@@ -198,7 +198,7 @@ def fetch_data_only():
     return True
 
 def send_messages_only():
-    """台灣約 17:00 / workflow：載入已儲存數據，比較變化，發送到所有聊天室和群組。成功／略過週末回傳 True，失敗回傳 False。"""
+    """台灣約 17:00 / 本機排程；GitHub Actions 則由 daily-pipeline 在抓取後接續執行。載入已儲存數據，比較變化，發送到所有聊天室和群組。成功／略過週末回傳 True，失敗回傳 False。"""
     today = _now_taiwan()
     yesterday = today - timedelta(days=1)
     today_str = _date_str(today)
@@ -231,12 +231,12 @@ def send_messages_only():
     
     _, load_prev, _, compare_fn, format_report, format_today, send_fn = _get_scraper_modules()
     
-    # 載入今日數據（16:30 抓取 workflow 已寫入的 holdings_data.json）
+    # 載入今日數據（同一 workflow 內剛跑完 fetch-only 寫入的 holdings_data.json）
     import json
     import os
     data_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holdings_data.json")
     if not os.path.exists(data_file):
-        print("[FAIL] 找不到 holdings_data.json，請先執行 16:30 的抓取")
+        print("[FAIL] 找不到 holdings_data.json，請先執行抓取（--fetch-only 或 daily-pipeline）")
         return False
     
     with open(data_file, "r", encoding="utf-8") as f:
@@ -325,7 +325,7 @@ def main():
     parser = argparse.ArgumentParser(description='00981A ETF 持股變化追蹤')
     parser.add_argument('--now', action='store_true', help='立即抓取並發送（本機測試用）')
     parser.add_argument('--fetch-only', action='store_true', help='僅抓取並儲存持股數據（16:30 使用）')
-    parser.add_argument('--send-only', action='store_true', help='僅讀取已儲存數據並發送報告（17:00 使用）')
+    parser.add_argument('--send-only', action='store_true', help='僅讀取已儲存數據並發送報告（GitHub daily-pipeline 或本機 17:00 使用）')
 
     args = parser.parse_args()
 
