@@ -33,6 +33,22 @@ jobs:
       TELEGRAM_CHAT_TOPIC_IDS_JSON: ${{ secrets.TELEGRAM_CHAT_TOPIC_IDS_JSON }}
 
     steps:
+      # 直接把 secrets / vars 的「名稱清單」印出（值會被 GitHub 自動遮蔽為 ***）
+      # 若這裡顯示空物件 {}，代表 GitHub 沒有把任何 secret 注入到此 run。
+      - name: 診斷：列出此 run 看得到的 secrets / vars 名稱
+        env:
+          ALL_SECRETS_JSON: ${{ toJSON(secrets) }}
+          ALL_VARS_JSON: ${{ toJSON(vars) }}
+        run: |
+          echo "== 此 run 看得到的 Repository / Organization SECRETS（值已遮蔽為 ***，僅顯示 key）=="
+          printf '%s\n' "$ALL_SECRETS_JSON"
+          echo
+          echo "== 此 run 看得到的 VARS（變數，值會顯示）=="
+          printf '%s\n' "$ALL_VARS_JSON"
+          echo
+          echo "註：若上面 SECRETS 是 {} 表示 GitHub 沒有把任何 secret 給此 run，"
+          echo "    請去 Settings → Secrets and variables → Actions → Repository secrets 確認。"
+
       - name: 檢出程式碼
         uses: actions/checkout@v4
         with:
