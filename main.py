@@ -193,7 +193,7 @@ def fetch_data_only():
     return True
 
 def send_messages_only():
-    """18:30 執行：載入已儲存數據，比較變化，發送到所有聊天室和群組"""
+    """18:30 執行：載入已儲存數據，比較變化，發送到所有聊天室和群組。成功／略過週末回傳 True，失敗回傳 False。"""
     today = _now_taiwan()
     yesterday = today - timedelta(days=1)
     today_str = _date_str(today)
@@ -209,7 +209,7 @@ def send_messages_only():
         print(f"[i] 今日為 {wname}（台灣 {today.strftime('%Y-%m-%d')}），依設定不發送 Telegram；略過。")
         print("[i] 若要在週末也發送：設定環境變數 SKIP_WEEKEND_SEND=0（GitHub Actions 可在 workflow env 加入）\n")
         print("="*60 + "\n")
-        return
+        return True
     
     try:
         from config import TELEGRAM_BOT_TOKEN, get_chat_ids
@@ -227,7 +227,7 @@ def send_messages_only():
     data_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holdings_data.json")
     if not os.path.exists(data_file):
         print("[FAIL] 找不到 holdings_data.json，請先執行 18:00 的抓取")
-        return
+        return False
     
     with open(data_file, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -256,26 +256,26 @@ def send_messages_only():
     if not bot_token:
         print("[FAIL] 未設定 Telegram Bot Token\n")
         print("="*60 + "\n")
-        import sys; sys.exit(1)
+        return False
 
     print(f"正在發送到 {len(chat_ids) or 1} 個聊天室/群組...")
     print(f"[i] Chat IDs: {chat_ids}")
     ok = send_to_all_chats(msg_today, report_compare, bot_token, chat_ids, send_fn)
     if ok:
         print("[OK] 至少一個聊天目標已成功收到兩則訊息；若日誌有 [!] 請修正對應 Chat ID 或 Secret。\n")
-    else:
-        print("[FAIL] 所有聊天目標皆發送失敗，請檢查 Chat ID、Bot 是否入群、Token。\n")
         print("="*60 + "\n")
-        import sys; sys.exit(1)
+        return True
+    print("[FAIL] 所有聊天目標皆發送失敗，請檢查 Chat ID、Bot 是否入群、Token。\n")
     print("="*60 + "\n")
+    return False
 
 def fetch_and_send():
-    """一次執行：抓取 + 儲存 + 發送（用於 --now 或手動測試）"""
+    """一次執行：抓取 + 儲存 + 發送（用於 --now 或手動測試）。成功回傳 True。"""
     ok = fetch_data_only()
     if ok:
-        send_messages_only()
-    else:
-        print("[i] 抓取失敗，跳過發送")
+        return send_messages_only()
+    print("[i] 抓取失敗，跳過發送")
+    return False
 
 def run_scheduler():
     """執行排程器：16:30 抓資料，17:00 發訊息到所有聊天室和群組"""
@@ -307,12 +307,14 @@ def main():
 
     args = parser.parse_args()
 
+    import sys
+
     if args.fetch_only:
-        fetch_data_only()
-    elif args.send_only:
-        send_messages_only()
-    elif args.now:
-        fetch_and_send()
+        sys.exit(0 if fetch_data_only() else 1)
+    if args.send_only:
+        sys.exit(0 if send_messages_only() else 1)
+    if args.now:
+        sys.exit(0 if fetch_and_send() else 1)
     else:
         try:
             run_scheduler()
