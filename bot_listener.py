@@ -20,7 +20,11 @@ if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
 try:
     from config import TELEGRAM_BOT_TOKEN
 except ImportError:
-    TELEGRAM_BOT_TOKEN = "8118096050:AAFbIs3h1FmbqI4bgCkOCV1Ndtl9kQ7kYzo"
+    TELEGRAM_BOT_TOKEN = None
+
+if not TELEGRAM_BOT_TOKEN:
+    import os
+    TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip() or None
 
 SUBSCRIBED_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "subscribed_chats.json")
 
@@ -53,6 +57,9 @@ def send_message(bot_token, chat_id, text):
 
 def run_listener():
     """監聽 /start 指令並自動加入訂閱"""
+    if not TELEGRAM_BOT_TOKEN:
+        print("[FAIL] 未設定 TELEGRAM_BOT_TOKEN（請設環境變數或在 config.py 設定，勿提交 token 至公開 repo）", flush=True)
+        return
     offset = 0
     print("="*50, flush=True)
     print("00981A 訂閱機器人已啟動", flush=True)
@@ -89,10 +96,10 @@ def run_listener():
                         save_subscribed(ids)
                         send_message(TELEGRAM_BOT_TOKEN, chat_id,
                             "✅ 已加入 00981A 持股報告訂閱！\n\n"
-                            "您將在每天 18:30 收到持股明細與變化報告。")
+                            "您將在每天約 17:00（台灣）收到持股明細與變化報告。")
                     else:
                         send_message(TELEGRAM_BOT_TOKEN, chat_id,
-                            "您已在訂閱名單中，每天 18:30 會收到 00981A 持股報告。")
+                            "您已在訂閱名單中，每天約 17:00（台灣）會收到 00981A 持股報告。")
                     # 終端顯示 Chat ID，方便手動加入 config
                     print("", flush=True)
                     print("=" * 50, flush=True)

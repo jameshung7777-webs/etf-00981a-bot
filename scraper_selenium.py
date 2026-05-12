@@ -15,47 +15,19 @@ import requests
 # Selenium 啟動逾時（秒），避免卡住（GitHub Actions 下載 ChromeDriver 較慢）
 SELENIUM_DRIVER_TIMEOUT = 60
 
-# 排除明顯非股票名稱（CSS、HTML、版權等），與 scraper_requests 一致
-def _is_garbage_name(name):
-    if not name or len(name) > 30:
-        return True
-    if not isinstance(name, str):
-        return True
-    garbage = (
-        '{', '}', ':', ';', 'px', 'rem', 'rgba', 'font', 'color', 'margin', 'padding',
-        'schema', 'copyright', '©', '.title', 'data-v-', '#', 'display', 'flex',
-        'justify-content', 'BreadcrumbList', 'version', 'pocket.tw', 'align-items',
-        '.custom', '.fundholding', '.loading', '.text-', '.menu', '.search', '.nav-',
-        '.footer', '.pageTitle', '.secondary-footer', '.default__', 'base64,'
-    )
-    name_lower = name.lower()
-    return any(g in name_lower for g in garbage)
 
-# 排除常見誤判代號
-def _is_garbage_code(code):
-    return code in ('0098', '2026')
-
-def _parse_percent(text):
-    """把百分比字串轉成 float，例如 '3.21%' -> 3.21"""
-    if text is None:
-        return None
-    s = str(text).strip().replace("%", "").replace("％", "").replace(",", "")
-    if not s:
-        return None
-    try:
-        return float(s)
-    except (TypeError, ValueError):
-        return None
-
-def _resolve_weight_pct(item):
-    """從不同欄位名稱解析單檔市值占比（百分比）。"""
-    if not isinstance(item, dict):
-        return None
-    for key in ("weight_pct", "weight", "ratio", "proportion", "holdingRatio", "percent"):
-        v = _parse_percent(item.get(key))
-        if v is not None and v >= 0:
-            return v
-    return None
+from holdings_common import (
+    _is_garbage_code,
+    _is_garbage_name,
+    _parse_percent,
+    _resolve_weight_pct,
+    load_previous_holdings,
+    save_holdings,
+    compare_holdings,
+    format_report,
+    format_today_holdings,
+    send_to_telegram,
+)
 
 def setup_driver():
     """設置 Chrome WebDriver（支援 GitHub Actions 環境）"""
@@ -514,479 +486,47 @@ def fetch_holdings_selenium():
     finally:
         driver.quit()
 
-def load_previous_holdings(data_file=None, current_date_str=None):
-    """載入「上一筆」持股快照做比較：依 JSON 內 date，嚴格早於今日且日期最新者。
-
-    不比對「UTC 日曆昨天」或檔名日期（易與台灣日切錯位）；改掃描所有 holdings_data_*.json
-    與 holdings_data.json，選上一個存檔業務日，週一會自動對到上一個交易日檔案（若 repo 內有）。
-    current_date_str：今日持股的 date（與 holdings_data.json 一致）；若省略則用台灣日期。
-    data_file：若指定路徑則只讀該檔（不做日期篩選）。"""
-    import glob
-
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    taiwan_tz = timezone(timedelta(hours=8))
-
-    def _parse_slash_date(s):
-        if not s:
-            return None
-        raw = str(s).strip().replace("-", "/")
-        parts = raw.split("/")
-        if len(parts) >= 3:
-            try:
-                return datetime(int(parts[0]), int(parts[1]), int(parts[2])).date()
-            except (ValueError, TypeError):
-                return None
-        return None
-
-    def _clean_payload(data):
-        if data and "holdings" in data:
-            clean = [
-                h
-                for h in data["holdings"]
-                if isinstance(h, dict)
-                and h.get("code")
-                and h.get("name")
-                and not _is_garbage_code(str(h.get("code", "")))
-                and not _is_garbage_name(str(h.get("name", "")))
-            ]
-            return {"date": data["date"], "holdings": clean}
-        return data
-
-    if data_file is not None:
-        if not os.path.exists(data_file):
-            return None
-        try:
-            with open(data_file, encoding="utf-8") as f:
-                data = json.load(f)
-            return _clean_payload(data)
-        except Exception as e:
-            print(f"載入歷史數據時發生錯誤: {e}")
-            return None
-
-    now_tw = datetime.now(taiwan_tz)
-    if current_date_str is None:
-        current_date_str = f"{now_tw.year}/{now_tw.month}/{now_tw.day}"
-    current_d = _parse_slash_date(current_date_str)
-    if current_d is None:
-        current_d = now_tw.date()
-
-    _fn_re = re.compile(r"holdings_data_(\d{4})-(\d{2})-(\d{2})_(\d+)\.json$")
-
-    def _path_file_date_time(path):
-        m = _fn_re.search(os.path.basename(path))
-        if not m:
-            return None
-        y, mo, d, hhmm = map(int, m.groups())
-        return datetime(y, mo, d).date(), hhmm
-
-    def _finalize(raw, chosen_path, force_same_day=False):
-        out = _clean_payload(raw)
-        if not out:
-            return None
-        print(f"[i] 持股變化比較基準：{os.path.basename(chosen_path)}（{raw.get('date')}）")
-        if force_same_day:
-            out = dict(out)
-            out["_force_compare_with_today"] = True
-        return out
-
-    paths = glob.glob(os.path.join(base_dir, "holdings_data_*.json"))
-    hj = os.path.join(base_dir, "holdings_data.json")
-    if os.path.isfile(hj):
-        paths.append(hj)
-
-    candidates = []
-    for path in paths:
-        try:
-            with open(path, encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception:
-            continue
-        if not data or "holdings" not in data:
-            continue
-        d = _parse_slash_date(data.get("date"))
-        if d is None or d >= current_d:
-            continue
-        candidates.append((d, path, data))
-
-    if candidates:
-        max_d = max(c[0] for c in candidates)
-        same_day = [c for c in candidates if c[0] == max_d]
-        _, chosen_path, raw = max(same_day, key=lambda c: c[1])
-        try:
-            return _finalize(raw, chosen_path, False)
-        except Exception as e:
-            print(f"載入歷史數據時發生錯誤: {e}")
-            return None
-
-    dated_paths = [
-        p
-        for p in glob.glob(os.path.join(base_dir, "holdings_data_*.json"))
-        if _path_file_date_time(p)
-    ]
-    fd_prev = []
-    for path in dated_paths:
-        fd, hhmm = _path_file_date_time(path)
-        if fd < current_d:
-            fd_prev.append((fd, hhmm, path))
-    if fd_prev:
-        fd_prev.sort(key=lambda x: (x[0], x[1]), reverse=True)
-        _, _, path = fd_prev[0]
-        try:
-            with open(path, encoding="utf-8") as f:
-                raw = json.load(f)
-            print("[i] 提示：以檔名日期選出基準（JSON 內 date 未早於今日之可用檔）")
-            return _finalize(raw, path, False)
-        except Exception as e:
-            print(f"載入歷史數據時發生錯誤: {e}")
-            return None
-
-    same_fname_day = []
-    for path in dated_paths:
-        fd, hhmm = _path_file_date_time(path)
-        if fd == current_d:
-            same_fname_day.append((hhmm, path))
-    same_fname_day.sort(reverse=True)
-    if len(same_fname_day) >= 2:
-        _, path = same_fname_day[1]
-        try:
-            with open(path, encoding="utf-8") as f:
-                raw = json.load(f)
-            print("[i] 提示：使用同日「次新」快照與最新 holdings_data.json 比較持股變化")
-            return _finalize(raw, path, True)
-        except Exception as e:
-            print(f"載入歷史數據時發生錯誤: {e}")
-            return None
-
-    print("[i] 找不到可對照的歷史持股檔（需：JSON date 早於今日、或檔名日期早於今日、或同日至少兩個 *_HHMM.json）")
-    return None
-
-def save_holdings(holdings, date_str, data_file=None):
-    """保存當前持股數據。會寫入：帶日期時間的檔案 + holdings_data.json（供下次比較用）"""
-    from datetime import datetime
-    now = datetime.now()
-    parts = str(date_str or "").split("/")
-    if not parts or len(parts[0]) != 4:
-        date_str = f"{now.year}/{now.month}/{now.day}"
-    data = {
-        'date': date_str,
-        'holdings': holdings
-    }
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    # 帶日期與時間的檔名，例如 holdings_data_2025-02-04_1430.json
-    dated_file = os.path.join(base_dir, f"holdings_data_{now:%Y-%m-%d}_{now:%H%M}.json")
-    latest_file = os.path.join(base_dir, "holdings_data.json")
-    try:
-        with open(dated_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        with open(latest_file, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"已保存 {date_str} 的持股數據 -> {os.path.basename(dated_file)}")
-    except Exception as e:
-        print(f"保存數據時發生錯誤: {e}")
-
-def _shares_int(val):
-    """JSON 可能為字串或浮點，統一為張數整數再比較。"""
-    try:
-        if val is None:
-            return 0
-        return int(float(val))
-    except (TypeError, ValueError):
-        return 0
-
-
-def compare_holdings(current, previous):
-    """比較持股變化"""
-    if not previous or 'holdings' not in previous:
-        return None
-    
-    prev_holdings = {h['code']: h for h in previous['holdings']}
-    curr_holdings = {h['code']: h for h in current}
-    
-    # 找出新增和刪除
-    added = []
-    removed = []
-    increased = []
-    decreased = []
-    
-    current_codes = set(curr_holdings.keys())
-    previous_codes = set(prev_holdings.keys())
-    
-    # 新增的股票
-    for code in current_codes - previous_codes:
-        added.append(curr_holdings[code])
-    
-    # 刪除的股票
-    for code in previous_codes - current_codes:
-        removed.append(prev_holdings[code])
-    
-    # 持股變化
-    for code in current_codes & previous_codes:
-        curr_shares = _shares_int(curr_holdings[code].get('shares'))
-        prev_shares = _shares_int(prev_holdings[code].get('shares'))
-        
-        if curr_shares > prev_shares:
-            increased.append({
-                'code': code,
-                'name': curr_holdings[code]['name'],
-                'prev': prev_shares,
-                'curr': curr_shares,
-                'diff': curr_shares - prev_shares
-            })
-        elif curr_shares < prev_shares:
-            decreased.append({
-                'code': code,
-                'name': curr_holdings[code]['name'],
-                'prev': prev_shares,
-                'curr': curr_shares,
-                'diff': prev_shares - curr_shares
-            })
-    
-    # 按變化量排序
-    increased.sort(key=lambda x: x['diff'], reverse=True)
-    decreased.sort(key=lambda x: x['diff'], reverse=True)
-    
-    return {
-        'added': added,
-        'removed': removed,
-        'increased': increased,
-        'decreased': decreased
-    }
-
-def format_today_holdings(holdings, date_str):
-    """格式化「今日持股」訊息（供 Telegram 第一則）；僅含乾淨項目，避免 CSS/HTML 混入"""
-    clean = [h for h in holdings
-             if isinstance(h, dict) and h.get('name') and h.get('code')
-             and not _is_garbage_code(str(h.get('code', '')))
-             and not _is_garbage_name(str(h.get('name', '')))]
-    lines = [f"00981A 今日持股明細（{date_str}）", ""]
-    has_weight = any(_resolve_weight_pct(h) is not None for h in clean)
-    total_shares = sum(int(h.get('shares', 0) or 0) for h in clean) or 0
-    if has_weight:
-        # 有權重時，依市值占比由高到低排列；缺值放最後
-        ordered = sorted(
-            clean,
-            key=lambda x: (_resolve_weight_pct(x) is None, -(_resolve_weight_pct(x) or -1.0), (x.get('name') or ''))
-        )
-    else:
-        # 無權重時，改用持有張數由高到低做估算排序
-        ordered = sorted(clean, key=lambda x: (-(int(x.get('shares', 0) or 0)), (x.get('name') or '')))
-
-    for h in ordered:
-        w = _resolve_weight_pct(h)
-        if has_weight and w is not None:
-            lines.append(f"・{h['name']}（{h['code']}）：{h['shares']:,} 張｜{w:.2f}%")
-        elif has_weight:
-            lines.append(f"・{h['name']}（{h['code']}）：{h['shares']:,} 張｜N/A")
-        else:
-            pct = (int(h.get('shares', 0) or 0) / total_shares * 100) if total_shares else 0
-            lines.append(f"・{h['name']}（{h['code']}）：{h['shares']:,} 張｜持有張數占比(估算) {pct:.2f}%")
-    lines.append("")
-    if has_weight:
-        lines.append("＊百分比使用網站提供之權重欄位（%）整理，僅供參考，未涉及投資建議。")
-    else:
-        lines.append("＊此頁未提供權重時，以持有張數占比作估算，非真正市值，僅供參考。")
-    return "\n".join(lines)
-
-def format_report(changes, prev_date, curr_date):
-    """格式化「與前日比較」報告（供 Telegram 第二則）"""
-    report = f"00981A 持股更新（{prev_date} → {curr_date}）\n\n"
-    
-    # 新增/刪除（只顯示乾淨項目，過濾 CSS/版權等）
-    def _ok(h):
-        n = (h.get('name') or '')
-        return n and not _is_garbage_name(n) and not _is_garbage_code(str(h.get('code', '')))
-    added_clean = [h for h in changes['added'] if _ok(h)]
-    removed_clean = [h for h in changes['removed'] if _ok(h)]
-    
-    report += "🆕 新增／刪除\n"
-    if added_clean:
-        added_list = [f"・{h['name']}（{h['code']}）：{h['shares']:,} 張" for h in added_clean]
-        report += "・新增：\n" + "\n".join(added_list) + "。\n"
-    else:
-        report += "・新增：無。\n"
-    
-    if removed_clean:
-        removed_list = [f"・{h['name']}（{h['code']}）：{h['shares']:,} 張" for h in removed_clean]
-        report += "・刪除：\n" + "\n".join(removed_list) + "。\n"
-    else:
-        report += "・刪除：無。\n"
-    
-    # 加碼/減碼（只顯示乾淨名稱）
-    increased_clean = [x for x in changes['increased'] if _ok(x)]
-    decreased_clean = [x for x in changes['decreased'] if _ok(x)]
-    report += "\n📈 主要加碼一覽（張數增加）\n"
-    if increased_clean:
-        for item in increased_clean:
-            report += f"・{item['name']}（{item['code']}）：＋{item['diff']:,} 張（{item['prev']:,} → {item['curr']:,} 張）。\n"
-    else:
-        report += "・無。\n"
-    
-    report += "\n📉 主要減碼一覽（張數減少）\n"
-    if decreased_clean:
-        for item in decreased_clean:
-            report += f"・{item['name']}（{item['code']}）：－{item['diff']:,} 張（{item['prev']:,} → {item['curr']:,} 張）。\n"
-    else:
-        report += "・無。\n"
-    
-    report += "\n＊以上為「張數」變動整理（1 張＝1,000 股），僅為持股結構異動說明，未涉及股價或投資建議。"
-    
-    return report
-
-# Telegram 單則訊息上限 4096 字元，分段時用 4000 保留餘裕
-TELEGRAM_MAX_MESSAGE_LENGTH = 4000
-
-def _split_message(text, max_len=TELEGRAM_MAX_MESSAGE_LENGTH):
-    """將過長訊息依換行分段，每段不超過 max_len"""
-    if len(text) <= max_len:
-        return [text]
-    chunks = []
-    rest = text
-    while rest:
-        if len(rest) <= max_len:
-            chunks.append(rest)
-            break
-        part = rest[:max_len]
-        last_nl = part.rfind("\n")
-        if last_nl > max_len // 2:
-            chunks.append(rest[: last_nl + 1])
-            rest = rest[last_nl + 1 :]
-        else:
-            chunks.append(rest[:max_len])
-            rest = rest[max_len:]
-    return chunks
-
-def send_to_telegram(message, bot_token, chat_id=None, message_thread_id=None):
-    """發送消息到 Telegram（若超過長度限制會自動分段發送）。
-    message_thread_id: 群組內 Topic/討論串 ID，不設則發到一般聊天。
-    多層防偵測機制：
-      1. 發送前隨機等待（模擬人工操作延遲）
-      2. 段落間依內容長度動態計算延遲（越長的訊息等越久）
-      3. Rate Limit 429 自動退避重試（最多 3 次，指數 + 隨機抖動）
-      4. 每次重試間額外隨機間隔，避免固定週期被識別
-    """
-    import random, time as _time
-
-    # ── 層級一：發送前隨機暖身延遲（2～10 秒）──
-    pre_delay = random.uniform(2.0, 10.0)
-    _time.sleep(pre_delay)
-
-    if not chat_id:
-        updates_url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
-        try:
-            response = requests.get(updates_url, timeout=10)
-            updates = response.json()
-            if updates.get('result') and len(updates['result']) > 0:
-                chat_id = updates['result'][-1]['message']['chat']['id']
-                print(f"自動獲取到 chat_id: {chat_id}")
-            else:
-                print("無法自動獲取 chat_id，請手動提供")
-                print("您可以發送任意消息給 bot，然後重新運行腳本")
-                return False
-        except Exception as e:
-            print(f"獲取 chat_id 時發生錯誤: {e}")
-            return False
-
-    send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    chunks = _split_message(message)
-    if len(chunks) > 5:
-        chunks = chunks[:5]
-        chunks[-1] = chunks[-1] + "\n\n…（訊息過長已截斷）"
-    all_ok = True
-
-    for i, chunk in enumerate(chunks):
-        # ── 層級二：段落間動態延遲 ──
-        if i > 0:
-            prev_len = len(chunks[i - 1])
-            base_delay = max(1.5, prev_len / 300)
-            jitter = random.uniform(0.8, 3.0)
-            _time.sleep(base_delay + jitter)
-
-        data = {"chat_id": chat_id, "text": chunk}
-        # Topic（message_thread_id）只對群組有效（群組 chat_id 為負數），私聊不帶此欄位
-        if message_thread_id is not None and isinstance(chat_id, int) and chat_id < 0:
-            data["message_thread_id"] = int(message_thread_id)
-
-        # ── 層級三：Rate Limit 退避重試（最多 3 次，指數 + 隨機抖動）──
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = requests.post(send_url, json=data, timeout=15)
-                body = response.json() if response.text else {}
-
-                if response.status_code == 429:
-                    retry_after = body.get("parameters", {}).get("retry_after", 5 * (2 ** attempt))
-                    wait = retry_after + random.uniform(1.0, 4.0)
-                    print(f"[!] 發送頻率超限（429），等待 {wait:.1f} 秒後重試（第 {attempt+1} 次）...")
-                    _time.sleep(wait)
-                    continue
-
-                if response.status_code == 200 and body.get("ok"):
-                    if len(chunks) > 1:
-                        print(f"[OK] 訊息第 {i + 1}/{len(chunks)} 段已發送")
-                    else:
-                        print("[OK] 消息已成功發送到 Telegram")
-                    break
-                else:
-                    all_ok = False
-                    err = body.get("description", response.text or f"HTTP {response.status_code}")
-                    print(f"發送失敗: {err}")
-                    break
-            except Exception as e:
-                all_ok = False
-                print(f"發送消息時發生錯誤（第 {attempt+1} 次）: {e}")
-                if attempt < max_retries - 1:
-                    # ── 層級四：異常後隨機間隔再重試 ──
-                    _time.sleep(random.uniform(3.0, 8.0))
-                else:
-                    import traceback
-                    traceback.print_exc()
-
-    return all_ok
-
 def main():
-    """主函數"""
-    # 獲取當前日期
-    today = datetime.now()
+    """主函數（本機直接執行 scraper_selenium 時）。"""
+    tw = timezone(timedelta(hours=8))
+    today = datetime.now(tw)
     yesterday = today - timedelta(days=1)
-    
-    today_str = f"{today.month}/{today.day}"
-    yesterday_str = f"{yesterday.month}/{yesterday.day}"
-    
+    today_str = f"{today.year}/{today.month}/{today.day}"
+    yesterday_str = f"{yesterday.year}/{yesterday.month}/{yesterday.day}"
     print(f"正在抓取 {today_str} 的持股數據...")
     print(f"比較日期: {yesterday_str} → {today_str}")
-    
-    # 抓取當前持股
     current_holdings = fetch_holdings_selenium()
-    
     if not current_holdings:
         print("[FAIL] 無法抓取持股數據")
         print("提示: 請確保已安裝 Chrome 瀏覽器和 ChromeDriver")
         return
-    
     print(f"[OK] 成功抓取 {len(current_holdings)} 檔股票的持股數據")
-    
-    # 載入前一天的數據
-    previous_data = load_previous_holdings()
-    
+    previous_data = load_previous_holdings(current_date_str=today_str)
     if previous_data:
         print(f"[OK] 載入 {previous_data['date']} 的歷史數據")
-        # 比較變化
         changes = compare_holdings(current_holdings, previous_data)
         if changes:
             report = format_report(changes, previous_data['date'], today_str)
-            print("\n" + "="*50)
+            print("\n" + "=" * 50)
             print(report)
-            print("="*50 + "\n")
-            
-            # 發送到 Telegram
-            bot_token = "8118096050:AAFbIs3h1FmbqI4bgCkOCV1Ndtl9kQ7kYzo"
-            send_to_telegram(report, bot_token)
+            print("=" * 50 + "\n")
+            import os
+            bot_token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+            if not bot_token:
+                try:
+                    from config import TELEGRAM_BOT_TOKEN as _t
+                    bot_token = (_t or "").strip() if _t else ""
+                except ImportError:
+                    pass
+            if not bot_token:
+                print("[!] 未設定 TELEGRAM_BOT_TOKEN，略過發送")
+            else:
+                send_to_telegram(report, bot_token)
     else:
         print("ℹ 沒有前一天的數據，僅保存當前數據")
         print("明天運行時將進行比較")
-    
-    # 保存當前數據
     save_holdings(current_holdings, today_str)
+
 
 if __name__ == "__main__":
     main()

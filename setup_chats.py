@@ -116,9 +116,14 @@ def main():
     # ── 讀取 token ──────────────────────────────────
     try:
         import config
-        token = config.TELEGRAM_BOT_TOKEN
+        token = (config.TELEGRAM_BOT_TOKEN or "").strip() if config.TELEGRAM_BOT_TOKEN else ""
     except Exception:
-        token = "8403948543:AAGB7M46NK6UQprmn_g2z8HnPWWK_jUgfX0"
+        token = ""
+    if not token:
+        token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+    if not token:
+        print("\n  [FAIL] 找不到 TELEGRAM_BOT_TOKEN（請設環境變數或 config.py，勿提交真 token 至公開 repo）")
+        sys.exit(1)
 
     ok, info = get_bot_info(token)
     if not ok:

@@ -14,11 +14,17 @@ jobs:
     steps:
     - name: 檢出程式碼
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        ref: ${{ github.ref }}
+
+    - name: 同步遠端最新（含 16:30 提交的 holdings JSON）
+      run: git pull --ff-only origin "${{ github.ref_name }}"
 
     - name: 設定 Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.9'
+        python-version: '3.11'
 
     - name: 安裝 Python 依賴
       run: |
@@ -32,6 +38,7 @@ jobs:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
         TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
+        TELEGRAM_CHAT_TOPIC_IDS_JSON: ${{ secrets.TELEGRAM_CHAT_TOPIC_IDS_JSON }}
       run: |
         echo "▶ 模式：send-only（固定）"
         python main.py --send-only

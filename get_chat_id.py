@@ -7,15 +7,26 @@
 4. 把畫面上顯示的 Chat ID 填進 config.py 的 TELEGRAM_CHAT_ID
 """
 
+import os
 import requests
 
 try:
     from config import TELEGRAM_BOT_TOKEN
 except ImportError:
-    TELEGRAM_BOT_TOKEN = "8403948543:AAGB7M46NK6UQprmn_g2z8HnPWWK_jUgfX0"
+    TELEGRAM_BOT_TOKEN = None
+
+def _token():
+    t = (TELEGRAM_BOT_TOKEN or "").strip() if TELEGRAM_BOT_TOKEN else ""
+    if not t:
+        t = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+    return t or None
 
 def main():
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+    token = _token()
+    if not token:
+        print("未設定 TELEGRAM_BOT_TOKEN。請在環境變數或 config.py 設定（勿將含真 token 的 config 提交至公開 repo）。")
+        return
+    url = f"https://api.telegram.org/bot{token}/getUpdates"
     print("正在取得最近與 Bot 的對話...")
     try:
         r = requests.get(url, timeout=10)

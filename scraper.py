@@ -261,9 +261,18 @@ if __name__ == "__main__":
             report = format_report(changes, previous_data['date'], today_str)
             print("\n" + report)
             
-            # 發送到 Telegram
-            bot_token = "8118096050:AAFbIs3h1FmbqI4bgCkOCV1Ndtl9kQ7kYzo"
-            send_to_telegram(report, bot_token)
+            # 發送到 Telegram（勿在程式碼內寫死 token）
+            bot_token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+            if not bot_token:
+                try:
+                    import config
+                    bot_token = (getattr(config, "TELEGRAM_BOT_TOKEN", None) or "").strip()
+                except Exception:
+                    bot_token = ""
+            if not bot_token:
+                print("[!] 未設定 TELEGRAM_BOT_TOKEN，略過 Telegram 發送")
+            else:
+                send_to_telegram(report, bot_token)
     else:
         print("沒有前一天的數據，僅保存當前數據")
     

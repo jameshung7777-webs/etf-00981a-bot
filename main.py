@@ -29,33 +29,38 @@ import time
 SELENIUM_TIMEOUT = 60  # 增加到 60 秒
 
 def _get_scraper_modules():
-    """取得 scraper 模組（requests 優先，selenium 備用）"""
+    """取得 scraper 模組（requests 優先，selenium 備用）。"""
     try:
         from scraper_requests import (
             fetch_holdings_requests, load_previous_holdings, save_holdings,
             compare_holdings, format_report, format_today_holdings, send_to_telegram
         )
         return fetch_holdings_requests, load_previous_holdings, save_holdings, compare_holdings, format_report, format_today_holdings, send_to_telegram
-    except ImportError:
-        from scraper_selenium import (
-            fetch_holdings_selenium, load_previous_holdings, save_holdings,
-            compare_holdings, format_report, format_today_holdings, send_to_telegram
-        )
-        return fetch_holdings_selenium, load_previous_holdings, save_holdings, compare_holdings, format_report, format_today_holdings, send_to_telegram
+    except Exception as e:
+        print(f"[!] scraper_requests 無法載入（{type(e).__name__}: {e}），改試 Selenium…")
+        try:
+            from scraper_selenium import (
+                fetch_holdings_selenium, load_previous_holdings, save_holdings,
+                compare_holdings, format_report, format_today_holdings, send_to_telegram
+            )
+            return fetch_holdings_selenium, load_previous_holdings, save_holdings, compare_holdings, format_report, format_today_holdings, send_to_telegram
+        except Exception as e2:
+            print(f"[!] scraper_selenium 亦無法載入（{type(e2).__name__}: {e2}）")
+            raise
 
 def send_to_all_chats(msg_today, report_compare, bot_token, chat_ids, send_to_telegram_fn):
     """發送訊息到所有聊天室和群組（含隨機傳送順序、間隔延遲，降低被 Telegram 偵測風險）。"""
     import random, time as _time
     try:
-        from config import get_message_thread_id
-        thread_id = get_message_thread_id()
+        from config import get_message_thread_id_for_chat
     except ImportError:
-        thread_id = None
+        get_message_thread_id_for_chat = lambda _cid: None
 
     if not chat_ids:
         for cid in [None]:
-            ok1 = send_to_telegram_fn(msg_today, bot_token, cid, thread_id)
-            ok2 = send_to_telegram_fn(report_compare, bot_token, cid, thread_id)
+            tid = get_message_thread_id_for_chat(cid) if cid else None
+            ok1 = send_to_telegram_fn(msg_today, bot_token, cid, tid)
+            ok2 = send_to_telegram_fn(report_compare, bot_token, cid, tid)
             if ok1 or ok2:
                 return True
         print("[!] 無法取得 chat_id，請在 config.py 設定 TELEGRAM_CHAT_IDS 或 TELEGRAM_CHAT_ID")
@@ -76,11 +81,11 @@ def send_to_all_chats(msg_today, report_compare, bot_token, chat_ids, send_to_te
             print(f"[i] 切換下一個目標，隨機等待 {inter_wait:.1f} 秒...")
             _time.sleep(inter_wait)
 
-        ok1 = send_to_telegram_fn(msg_today, bot_token, cid, thread_id)
+        ok1 = send_to_telegram_fn(msg_today, bot_token, cid, get_message_thread_id_for_chat(cid))
         # 同一目標兩則訊息之間隨機停頓（3～8 秒），模擬人工停頓
         msg_wait = random.uniform(3.0, 8.0)
         _time.sleep(msg_wait)
-        ok2 = send_to_telegram_fn(report_compare, bot_token, cid, thread_id)
+        ok2 = send_to_telegram_fn(report_compare, bot_token, cid, get_message_thread_id_for_chat(cid))
         if ok1 and ok2:
             ok_targets.append(cid)
         else:
@@ -138,11 +143,11 @@ def _skip_send_on_weekend():
     return v not in ("0", "false", "no", "off")
 
 def fetch_data_only():
-    """18:00 執行：只抓取數據並儲存，不發送訊息。成功回傳 True，失敗回傳 False。"""
+    """台灣約 16:30 / workflow：只抓取數據並儲存，不發送訊息。成功回傳 True，失敗回傳 False。"""
     today = _now_taiwan()
     today_str = _date_str(today)
     print("="*60)
-    print("[18:00] 00981A 抓取持股數據")
+    print("[16:30] 00981A 抓取持股數據")
     print("="*60)
     print(f"執行時間（台灣）: {today.strftime('%Y-%m-%d %H:%M:%S')}\n")
     
@@ -193,14 +198,14 @@ def fetch_data_only():
     return True
 
 def send_messages_only():
-    """18:30 執行：載入已儲存數據，比較變化，發送到所有聊天室和群組。成功／略過週末回傳 True，失敗回傳 False。"""
+    """台灣約 17:00 / workflow：載入已儲存數據，比較變化，發送到所有聊天室和群組。成功／略過週末回傳 True，失敗回傳 False。"""
     today = _now_taiwan()
     yesterday = today - timedelta(days=1)
     today_str = _date_str(today)
     yesterday_str = _date_str(yesterday)
     
     print("="*60)
-    print("[18:30] 00981A 發送持股報告")
+    print("[17:00] 00981A 發送持股報告")
     print("="*60)
     print(f"執行時間（台灣）: {today.strftime('%Y-%m-%d %H:%M:%S')}\n")
 
@@ -216,17 +221,18 @@ def send_messages_only():
         bot_token = TELEGRAM_BOT_TOKEN
         chat_ids = get_chat_ids()
     except ImportError:
-        bot_token = "8403948543:AAGB7M46NK6UQprmn_g2z8HnPWWK_jUgfX0"
+        import os
+        bot_token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip() or None
         chat_ids = []
     
     _, load_prev, _, compare_fn, format_report, format_today, send_fn = _get_scraper_modules()
     
-    # 載入今日數據（剛剛 18:00 抓的）
+    # 載入今日數據（16:30 抓取 workflow 已寫入的 holdings_data.json）
     import json
     import os
     data_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "holdings_data.json")
     if not os.path.exists(data_file):
-        print("[FAIL] 找不到 holdings_data.json，請先執行 18:00 的抓取")
+        print("[FAIL] 找不到 holdings_data.json，請先執行 16:30 的抓取")
         return False
     
     with open(data_file, "r", encoding="utf-8") as f:
@@ -252,6 +258,15 @@ def send_messages_only():
         report_compare = (
             f"00981A 持股更新（{yesterday_str} → {today_str}）\n\n（無前日資料可比較）\n\n" + msg_today
         )
+
+    _warn_len = 3500  # Telegram 單則約 4096，提前於日誌警示
+    for _label, _body in (("今日明細", msg_today), ("變化報告", report_compare)):
+        _n = len(_body or "")
+        if _n > _warn_len:
+            print(
+                f"[!] 「{_label}」長度 {_n} 字，已超過 {_warn_len}，"
+                "接近 Telegram 單則上限 4096，若發送失敗請縮短內容或確認分段邏輯。"
+            )
     
     if not bot_token:
         print("[FAIL] 未設定 Telegram Bot Token\n")

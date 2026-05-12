@@ -136,7 +136,6 @@ def send_test_message(new_token: str):
         import config
 
         chat_ids    = config.get_chat_ids()
-        thread_id   = config.get_message_thread_id()
         url         = f"https://api.telegram.org/bot{new_token}/sendMessage"
         text        = "✅ Bot Token 已成功更換，系統已恢復正常運作！"
 
@@ -146,8 +145,9 @@ def send_test_message(new_token: str):
 
         for cid in chat_ids:
             payload = {"chat_id": cid, "text": text}
-            if thread_id:
-                payload["message_thread_id"] = thread_id
+            tid = config.get_message_thread_id_for_chat(cid)
+            if tid is not None:
+                payload["message_thread_id"] = tid
             resp = requests.post(url, json=payload, timeout=10)
             body = resp.json() if resp.text else {}
             if resp.status_code == 200 and body.get("ok"):

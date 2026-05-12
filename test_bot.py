@@ -28,16 +28,20 @@ try:
     import config
     token     = config.TELEGRAM_BOT_TOKEN
     chat_ids  = config.get_chat_ids()
-    thread_id = config.get_message_thread_id()
-    print(f"\n  Token     : {token[:10]}...{token[-6:]}")
+    print(f"\n  Token     : {(token[:10] + '...' + token[-6:]) if token and len(token) > 16 else (token or '（未設定）')}")
     print(f"  Chat IDs  : {chat_ids}")
     print(f"             （config 的 TELEGRAM_CHAT_IDS + TELEGRAM_CHAT_ID + subscribed_chats.json 合併）")
-    print(f"  Thread ID : {thread_id}（僅套用在群組；私聊不會帶 Topic）")
+    print("  Topic 對照（僅列出的超級群會帶 message_thread_id）：")
+    for cid in chat_ids:
+        tid = config.get_message_thread_id_for_chat(cid)
+        print(f"    {cid} → {tid if tid is not None else '（無／一般聊天）'}")
 except Exception as e:
     print(f"  [FAIL] 讀取 config 失敗: {e}")
     sys.exit(1)
 
-# ── 驗證 Bot Token（getMe）────────────────────────────
+if not token:
+    print("  [FAIL] TELEGRAM_BOT_TOKEN 未設定。請設環境變數 TELEGRAM_BOT_TOKEN 或在 config 中設定（勿提交真 token 至公開 repo）。")
+    sys.exit(1)
 print(f"\n{SEP}")
 print("  1. 驗證 Bot Token")
 print(SEP)
@@ -77,9 +81,9 @@ for cid in chat_ids:
         "chat_id": cid,
         "text": "🔧 [診斷] Bot 連線測試訊息，請忽略。"
     }
-    # Topic 僅適用群組（chat_id 為負數）；私聊不可帶 message_thread_id
-    if thread_id is not None and isinstance(cid, int) and cid < 0:
-        payload["message_thread_id"] = thread_id
+    tid = config.get_message_thread_id_for_chat(cid)
+    if tid is not None:
+        payload["message_thread_id"] = tid
 
     try:
         r = requests.post(url, json=payload, timeout=10)
@@ -98,7 +102,7 @@ for cid in chat_ids:
                 print(f"    ➜ 找不到 Chat ID：{cid}")
                 print(f"       請確認 Chat ID 正確，或 Bot 尚未和此 Chat 互動過")
             elif "TOPIC_CLOSED" in err or "thread" in err.lower():
-                print(f"    ➜ Topic ID {thread_id} 可能已關閉或不存在")
+                print(f"    ➜ Topic 可能未設定、已關閉或與此群不符（請檢查 TELEGRAM_CHAT_TOPIC_IDS_JSON）")
             elif "Forbidden" in err:
                 print(f"    ➜ Bot 被封鎖或已被踢出群組")
     except Exception as e:

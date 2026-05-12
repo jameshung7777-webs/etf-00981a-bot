@@ -1,15 +1,15 @@
 """
 配置文件
-支援環境變數（優先使用環境變數，適合 GitHub Actions）
+支援環境變數（GitHub Actions / 本機）。
+Telegram Bot Token 請勿寫死在程式碼，請用環境變數或本機 config（勿提交含真 token 的檔案至公開 repo）。
 """
 
 import os
 import json
 
-# Telegram Bot Token
-# 優先使用環境變數（GitHub Actions），空字串時使用預設值
+# Telegram Bot Token（必填：環境變數 TELEGRAM_BOT_TOKEN；未設則為 None）
 _t = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_BOT_TOKEN = (_t or "").strip() or "8403948543:AAGB7M46NK6UQprmn_g2z8HnPWWK_jUgfX0"
+TELEGRAM_BOT_TOKEN = (_t or "").strip() or None
 
 # Telegram Chat ID（單一，相容舊版）
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", None)
@@ -30,28 +30,51 @@ def _parse_chat_ids_csv(s):
 
 
 # GitHub Actions 會注入環境變數 TELEGRAM_CHAT_IDS（Secrets）。
-# 若先前「有設 Secret 就完全覆寫檔案」，會漏掉上面預設的群組；改為「檔案預設 + 環境變數」合併去重。
+# 「檔案預設 + 環境變數」合併去重。
 _ids_env = os.getenv("TELEGRAM_CHAT_IDS")
 _base_ids = _parse_chat_ids_csv(TELEGRAM_CHAT_IDS)
 _env_ids = _parse_chat_ids_csv(_ids_env) if _ids_env else []
 TELEGRAM_CHAT_IDS_STR = ",".join(dict.fromkeys(_base_ids + _env_ids))
 
-# 群組內的「討論串 / Topic」ID（僅限有開啟論壇的群組）
-# 在該 topic 的訊息上按右鍵「複製連結」可從網址看到 thread 數字，或從 getUpdates 取得
-# 不設或留空表示發到一般群組（非 topic）
-TELEGRAM_MESSAGE_THREAD_ID_DEFAULT = "50627"  # t.me/c/2890383818/50627 → 發到此 topic
-TELEGRAM_MESSAGE_THREAD_ID = (os.getenv("TELEGRAM_MESSAGE_THREAD_ID") or TELEGRAM_MESSAGE_THREAD_ID_DEFAULT or "").strip()
+# ── Topic（討論串）：依「群組 chat_id」對應，未列出的群組不帶 message_thread_id ──
+# 環境變數 TELEGRAM_CHAT_TOPIC_IDS_JSON 可覆寫／擴充，例如：
+#   {"-1002890383818": 50627}
+# 舊版單一 TELEGRAM_MESSAGE_THREAD_ID 已不再套用到所有群組（避免錯群）。
+_DEFAULT_CHAT_TOPIC_MAP = {-1002890383818: 50627}
+
+
+def _effective_topic_map():
+    m = dict(_DEFAULT_CHAT_TOPIC_MAP)
+    raw = (os.getenv("TELEGRAM_CHAT_TOPIC_IDS_JSON") or "").strip()
+    if raw:
+        try:
+            for k, v in json.loads(raw).items():
+                m[int(k)] = int(v)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
+    return m
+
+
+def get_message_thread_id_for_chat(chat_id):
+    """若該 chat 有設定 Topic，回傳 int；否則 None（不寫入 Telegram 的 message_thread_id）。"""
+    if chat_id is None:
+        return None
+    try:
+        cid = int(chat_id)
+    except (TypeError, ValueError):
+        return None
+    if cid >= 0:
+        return None
+    return _effective_topic_map().get(cid)
 
 
 def get_message_thread_id():
-    """取得要發送到的 Topic ID（int 或 None）。None 表示不指定 topic。"""
-    s = (os.getenv("TELEGRAM_MESSAGE_THREAD_ID") or TELEGRAM_MESSAGE_THREAD_ID or "").strip()
-    if not s:
+    """相容舊診斷腳本：回傳 map 中任一 thread id（僅供顯示）；發送時實際依 get_message_thread_id_for_chat。"""
+    m = _effective_topic_map()
+    if not m:
         return None
-    try:
-        return int(s)
-    except ValueError:
-        return None
+    return next(iter(m.values()))
+
 
 # 訂閱名單（/start 指令自動加入的 Chat ID）
 SUBSCRIBED_CHATS_FILE = "subscribed_chats.json"
@@ -76,7 +99,6 @@ def _resolve_telegram_chat_ids(ids):
 def get_chat_ids():
     """取得所有要發送的 Chat ID 列表（config + 訂閱名單）"""
     ids = []
-    # 1. config 設定的 Chat IDs
     if TELEGRAM_CHAT_IDS_STR:
         for s in TELEGRAM_CHAT_IDS_STR.replace(" ", "").split(","):
             s = s.strip()
@@ -93,7 +115,6 @@ def get_chat_ids():
                 ids.append(c)
         except (ValueError, TypeError):
             pass
-    # 2. 透過 /start 訂閱的 Chat IDs
     sub_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), SUBSCRIBED_CHATS_FILE)
     if os.path.exists(sub_file):
         try:
@@ -106,6 +127,7 @@ def get_chat_ids():
             pass
     return _resolve_telegram_chat_ids(ids)
 
+
 # ETF 代號
 ETF_CODE = "00981A"
 
@@ -113,5 +135,5 @@ ETF_CODE = "00981A"
 DATA_FILE = "holdings_data.json"
 
 # Selenium 設置
-HEADLESS_MODE = True  # 是否使用無頭模式
-WAIT_TIME = 5  # 頁面載入等待時間（秒）
+HEADLESS_MODE = True
+WAIT_TIME = 5
