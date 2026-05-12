@@ -114,7 +114,8 @@ jobs:
           fi
         continue-on-error: true
 
-      # 將 Bot token 寫入 GITHUB_ENV（多行語法），下一步的 python 才讀得到；避免 job env + secrets 在部分情況未傳入子程序
+      # 將 Bot token 寫入 GITHUB_ENV（多行語法），下一步的 python 才讀得到。
+      # 失敗時會「同一格」印出 GitHub 此次注入的 secrets / vars 名稱（值已遮蔽為 ***）方便排查。
       - name: 準備 TELEGRAM_BOT_TOKEN（下一步 send-only 使用）
         if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'fetch_only') }}
         env:
@@ -122,6 +123,8 @@ jobs:
           _TG1: ${{ secrets['TELEGRAM_TOKEN'] }}
           _TG2: ${{ secrets['BOT_TOKEN'] }}
           _TG_VAR: ${{ vars['TELEGRAM_ACTIONS_BOT_TOKEN'] }}
+          ALL_SECRETS_JSON: ${{ toJSON(secrets) }}
+          ALL_VARS_JSON: ${{ toJSON(vars) }}
         run: |
           echo "repo=${GITHUB_REPOSITORY} event=${{ github.event_name }}"
           TG="$(printf '%s' "${_TG0:-}" | tr -d '\r\n')"
@@ -130,11 +133,17 @@ jobs:
           if [ -z "$TG" ]; then TG="$(printf '%s' "${_TG_VAR:-}" | tr -d '\r\n')"; fi
           if [ -z "$TG" ]; then
             echo "::error::此 run 讀不到 TELEGRAM_BOT_TOKEN／TELEGRAM_TOKEN／BOT_TOKEN。"
-            echo "::notice::Secrets 檢查頁: https://github.com/${GITHUB_REPOSITORY}/settings/secrets/actions（須在 Secrets 分頁，不是 Variables）"
-            echo "::error::1) 確認本倉庫（${GITHUB_REPOSITORY}）已建立名稱完全符合的 Secret：TELEGRAM_BOT_TOKEN"
-            echo "::error::2) 若 token 只建在 GitHub Environment：請在本檔 jobs.daily 下取消註解 environment: <你的環境名>"
-            echo "::error::3) 臨時除錯可設 Repository Variable TELEGRAM_ACTIONS_BOT_TOKEN（僅私人倉庫）"
-            echo "::error::4) 若使用 Organization secrets：請在 Org Settings 確認已將該 secret 授權給此倉庫"
+            echo ""
+            echo "── 此 run 看得到的 SECRETS（key 可見，值已遮蔽為 ***） ──"
+            printf '%s\n' "$ALL_SECRETS_JSON"
+            echo "── 此 run 看得到的 VARS（變數，值會顯示） ──"
+            printf '%s\n' "$ALL_VARS_JSON"
+            echo ""
+            echo "::notice::Secrets 設定頁: https://github.com/${GITHUB_REPOSITORY}/settings/secrets/actions"
+            echo "::error::A) 若上方 SECRETS 是 {}：完全沒注入。請去 Settings → Secrets and variables → Actions → Secrets（不是 Variables）新增 TELEGRAM_BOT_TOKEN"
+            echo "::error::B) 若有看到別的 secret 但沒有 TELEGRAM_BOT_TOKEN：名稱不一致，刪掉重建（須完全等於 TELEGRAM_BOT_TOKEN）"
+            echo "::error::C) 若 token 在 GitHub Environment：在 jobs.daily 下取消註解 environment: <你的環境名>"
+            echo "::error::D) Org secret 對 Free org + private repo 不可見；請改建 Repository secret"
             exit 1
           fi
           {
