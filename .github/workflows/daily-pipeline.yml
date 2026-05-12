@@ -16,15 +16,6 @@ on:
           - send_only
         default: full
 
-# 各 step 共用（避免每步重複 env 區塊）
-env:
-  SKIP_WEEKEND_SEND: ${{ secrets.SKIP_WEEKEND_SEND }}
-  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN || secrets.TELEGRAM_TOKEN || secrets.BOT_TOKEN }}
-  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-  TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
-  TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
-  TELEGRAM_CHAT_TOPIC_IDS_JSON: ${{ secrets.TELEGRAM_CHAT_TOPIC_IDS_JSON }}
-
 jobs:
   daily:
     runs-on: ubuntu-latest
@@ -32,6 +23,16 @@ jobs:
       contents: write
     # 若 Bot token 放在 GitHub Environments 的 secrets，請取消註解並改成你的環境名稱：
     # environment: production
+    # 分別注入 secret（勿用 secrets.A||secrets.B 單一表達式：部分情況會變成空字串）
+    env:
+      SKIP_WEEKEND_SEND: ${{ secrets.SKIP_WEEKEND_SEND }}
+      TELEGRAM_SECRET_PRIMARY: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_SECRET_ALT1: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_SECRET_ALT2: ${{ secrets.BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
+      TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
+      TELEGRAM_CHAT_TOPIC_IDS_JSON: ${{ secrets.TELEGRAM_CHAT_TOPIC_IDS_JSON }}
 
     steps:
     - name: 檢出程式碼
@@ -102,6 +103,10 @@ jobs:
     - name: 發送 Telegram
       if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'fetch_only') }}
       run: |
+        TG="$TELEGRAM_SECRET_PRIMARY"
+        if [ -z "$TG" ]; then TG="$TELEGRAM_SECRET_ALT1"; fi
+        if [ -z "$TG" ]; then TG="$TELEGRAM_SECRET_ALT2"; fi
+        export TELEGRAM_BOT_TOKEN="$TG"
         if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
           echo "::error::找不到 Bot Token。請在 Actions → Secrets 建立 TELEGRAM_BOT_TOKEN（或 TELEGRAM_TOKEN / BOT_TOKEN）。若 secrets 放在 Environment，請在本 job 加上 environment: <環境名>。"
           exit 1
