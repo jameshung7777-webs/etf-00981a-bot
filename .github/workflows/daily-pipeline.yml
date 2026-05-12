@@ -1,5 +1,5 @@
 # 00981A：抓取 → 提交 holdings JSON → 發送 Telegram（單一 workflow）
-# 排程：台灣 16:30（UTC 08:30）一次跑完；不再與第二個 cron 分檔，避免多 schedule 誤判。
+# 排程：台灣 16:30（UTC 08:30）一次跑完。
 name: 00981A ETF 每日流程
 
 on:
@@ -15,109 +15,134 @@ on:
           - fetch_only
           - send_only
         default: full
+      github_environment:
+        description: 'Bot token 若建在 GitHub Environment 選其名稱；僅用 Repository secrets 請選 __none__'
+        type: choice
+        required: true
+        options:
+          - __none__
+          - production
+        default: __none__
 
 jobs:
   daily:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # 若 Bot token 放在 GitHub Environments 的 secrets，請取消註解並改成你的環境名稱：
-    # environment: production
-    # 分別注入 secret（勿用 secrets.A||secrets.B 單一表達式：部分情況會變成空字串）
+    # 手動執行且 token 在 Environment 時選 production（或改成你的環境名並同步 options）；排程固定不綁 Environment。
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.github_environment != '__none__' && inputs.github_environment || '' }}
     env:
       SKIP_WEEKEND_SEND: ${{ secrets.SKIP_WEEKEND_SEND }}
-      TELEGRAM_SECRET_PRIMARY: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-      TELEGRAM_SECRET_ALT1: ${{ secrets.TELEGRAM_TOKEN }}
-      TELEGRAM_SECRET_ALT2: ${{ secrets.BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
       TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
       TELEGRAM_CHAT_TOPIC_IDS_JSON: ${{ secrets.TELEGRAM_CHAT_TOPIC_IDS_JSON }}
 
     steps:
-    - name: 檢出程式碼
-      uses: actions/checkout@v4
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0
-        ref: ${{ github.ref }}
+      - name: 檢出程式碼
+        uses: actions/checkout@v4
+        with:
+          token: ${{ github.token }}
+          fetch-depth: 0
+          ref: ${{ github.ref }}
 
-    - name: 同步遠端（僅 send_only）
-      if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'send_only' }}
-      run: git pull --ff-only origin "${{ github.ref_name }}"
+      - name: 同步遠端（僅 send_only）
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'send_only' }}
+        run: git pull --ff-only origin "${{ github.ref_name }}"
 
-    - name: 設定 Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - name: 設定 Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
-    - name: 安裝 Python 依賴
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: 安裝 Python 依賴
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: 安裝 Chrome（抓取需要）
-      id: setup-chrome
-      if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'send_only') }}
-      uses: browser-actions/setup-chrome@v2
-      with:
-        chrome-version: stable
-        install-chromedriver: true
-        install-dependencies: true
+      - name: 安裝 Chrome（抓取需要）
+        id: setup-chrome
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'send_only') }}
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+          install-chromedriver: true
+          install-dependencies: true
 
-    - name: 抓取持股
-      if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'send_only') }}
-      env:
-        CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
-        CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
-      run: |
-        echo "▶ python main.py --fetch-only"
-        python main.py --fetch-only
+      - name: 抓取持股
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'send_only') }}
+        env:
+          CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
+        run: |
+          echo "▶ python main.py --fetch-only"
+          python main.py --fetch-only
 
-    - name: 提交 holdings JSON 到 repo
-      if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'send_only') }}
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git add holdings_data.json holdings_data_*.json 2>/dev/null || true
-        if ! git diff --staged --quiet 2>/dev/null; then
-          git commit -m "chore: 儲存每日持股數據 $(date +%Y-%m-%d)"
-          BRANCH="${GITHUB_REF_NAME}"
-          for attempt in 1 2 3 4 5; do
-            git fetch origin "$BRANCH"
-            git pull --rebase origin "$BRANCH" || true
-            if git push origin "$BRANCH"; then
-              echo "已提交並推送持股 JSON"
-              exit 0
-            fi
-            echo "::warning::push 被拒絕或失敗，第 ${attempt}/5 次重試（先 pull --rebase）..."
-            sleep 10
-          done
-          echo "::error::push 多次失敗，請檢查是否與其他提交衝突"
-          exit 1
-        else
-          echo "無新數據需提交"
-        fi
-      continue-on-error: true
+      - name: 提交 holdings JSON 到 repo
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'send_only') }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add holdings_data.json holdings_data_*.json 2>/dev/null || true
+          if ! git diff --staged --quiet 2>/dev/null; then
+            git commit -m "chore: 儲存每日持股數據 $(date +%Y-%m-%d)"
+            BRANCH="${GITHUB_REF_NAME}"
+            for attempt in 1 2 3 4 5; do
+              git fetch origin "$BRANCH"
+              git pull --rebase origin "$BRANCH" || true
+              if git push origin "$BRANCH"; then
+                echo "已提交並推送持股 JSON"
+                exit 0
+              fi
+              echo "::warning::push 被拒絕或失敗，第 ${attempt}/5 次重試（先 pull --rebase）..."
+              sleep 10
+            done
+            echo "::error::push 多次失敗，請檢查是否與其他提交衝突"
+            exit 1
+          else
+            echo "無新數據需提交"
+          fi
+        continue-on-error: true
 
-    - name: 發送 Telegram
-      if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'fetch_only') }}
-      run: |
-        TG="$TELEGRAM_SECRET_PRIMARY"
-        if [ -z "$TG" ]; then TG="$TELEGRAM_SECRET_ALT1"; fi
-        if [ -z "$TG" ]; then TG="$TELEGRAM_SECRET_ALT2"; fi
-        export TELEGRAM_BOT_TOKEN="$TG"
-        if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
-          echo "::error::找不到 Bot Token。請在 Actions → Secrets 建立 TELEGRAM_BOT_TOKEN（或 TELEGRAM_TOKEN / BOT_TOKEN）。若 secrets 放在 Environment，請在本 job 加上 environment: <環境名>。"
-          exit 1
-        fi
-        echo "▶ python main.py --send-only"
-        python main.py --send-only
+      # 將 Bot token 寫入 GITHUB_ENV（多行語法），下一步的 python 才讀得到；避免 job env + secrets 在部分情況未傳入子程序
+      - name: 準備 TELEGRAM_BOT_TOKEN（下一步 send-only 使用）
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'fetch_only') }}
+        env:
+          _TG0: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          _TG1: ${{ secrets.TELEGRAM_TOKEN }}
+          _TG2: ${{ secrets.BOT_TOKEN }}
+          _TG_VAR: ${{ vars.TELEGRAM_ACTIONS_BOT_TOKEN }}
+        run: |
+          echo "repo=${GITHUB_REPOSITORY} event=${{ github.event_name }}"
+          TG="$(printf '%s' "${_TG0:-}" | tr -d '\r\n')"
+          if [ -z "$TG" ]; then TG="$(printf '%s' "${_TG1:-}" | tr -d '\r\n')"; fi
+          if [ -z "$TG" ]; then TG="$(printf '%s' "${_TG2:-}" | tr -d '\r\n')"; fi
+          if [ -z "$TG" ]; then TG="$(printf '%s' "${_TG_VAR:-}" | tr -d '\r\n')"; fi
+          if [ -z "$TG" ]; then
+            echo "::error::此 run 讀不到 TELEGRAM_BOT_TOKEN／TELEGRAM_TOKEN／BOT_TOKEN。請確認："
+            echo "::error::1) Repo Settings → Secrets and variables → Actions → Secrets 已建立 TELEGRAM_BOT_TOKEN（勿放在 Variables）。"
+            echo "::error::2) 若建在 GitHub Environment：手動執行 workflow 時選擇正確的 github_environment；排程只會讀 Repository secrets。"
+            echo "::error::3) 臨時除錯可設 Repository Variable TELEGRAM_ACTIONS_BOT_TOKEN（僅限私人倉庫，勿對外公開）。"
+            exit 1
+          fi
+          {
+            echo "TELEGRAM_BOT_TOKEN<<__TG_EOF__"
+            printf '%s' "$TG"
+            echo ""
+            echo "__TG_EOF__"
+          } >> "$GITHUB_ENV"
+          echo "::notice::已寫入 TELEGRAM_BOT_TOKEN 供下一步使用（內容不會印出）。"
 
-    - name: 上傳數據備份
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: holdings-data
-        path: holdings_data*.json
-        retention-days: 30
+      - name: 發送 Telegram（send-only）
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'fetch_only') }}
+        run: |
+          echo "▶ python main.py --send-only"
+          python main.py --send-only
+
+      - name: 上傳數據備份
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: holdings-data
+          path: holdings_data*.json
+          retention-days: 30
