@@ -7,9 +7,15 @@ Telegram Bot Token 請勿寫死在程式碼，請用環境變數或本機 config
 import os
 import json
 
-# Telegram Bot Token（必填：環境變數 TELEGRAM_BOT_TOKEN；未設則為 None）
-_t = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_BOT_TOKEN = (_t or "").strip() or None
+
+def get_telegram_bot_token():
+    """從環境變數讀取 Bot Token（每次呼叫重新讀取；發送前請用此函式，勿依賴過期的 import 快照）。"""
+    t = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+    return t or None
+
+
+# Telegram Bot Token（模組載入時快照，相容舊程式 `from config import TELEGRAM_BOT_TOKEN`）
+TELEGRAM_BOT_TOKEN = get_telegram_bot_token()
 
 # Telegram Chat ID（單一，相容舊版）
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", None)

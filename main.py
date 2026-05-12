@@ -217,8 +217,8 @@ def send_messages_only():
         return True
     
     try:
-        from config import TELEGRAM_BOT_TOKEN, get_chat_ids
-        bot_token = TELEGRAM_BOT_TOKEN
+        from config import get_chat_ids, get_telegram_bot_token
+        bot_token = get_telegram_bot_token()
         chat_ids = get_chat_ids()
     except ImportError:
         import os
@@ -269,7 +269,11 @@ def send_messages_only():
             )
     
     if not bot_token:
-        print("[FAIL] 未設定 Telegram Bot Token\n")
+        print("[FAIL] 未設定 Telegram Bot Token（程式讀不到環境變數 TELEGRAM_BOT_TOKEN）\n")
+        print("[i] GitHub Actions：請到本倉庫 Settings → Secrets and variables → **Actions** → **Secrets**")
+        print("    新增名稱完全符合的 TELEGRAM_BOT_TOKEN；若曾誤用「Variables」分頁，workflow 讀不到。")
+        print("[i] 若 token 放在 **Environments** 的 secrets，請在 workflow 的 job 加上：environment: <你的環境名稱>。")
+        print("[i] 亦可新增備用 secret 名稱 TELEGRAM_TOKEN（與 TELEGRAM_BOT_TOKEN 擇一即可，workflow 會自動合併）。")
         print("="*60 + "\n")
         return False
 

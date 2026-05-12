@@ -10,6 +10,8 @@ on:
 jobs:
   run:
     runs-on: ubuntu-latest
+    # 若你把 Bot token 放在 GitHub「Environments」的 secrets，請取消下一行註解並改成你的環境名稱：
+    # environment: production
 
     steps:
     - name: 檢出程式碼
@@ -34,11 +36,18 @@ jobs:
     - name: 發送持股報告
       env:
         SKIP_WEEKEND_SEND: ${{ secrets.SKIP_WEEKEND_SEND }}
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        _T_MAIN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        _T_ALT: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         TELEGRAM_CHAT_IDS: ${{ secrets.TELEGRAM_CHAT_IDS }}
         TELEGRAM_MESSAGE_THREAD_ID: ${{ secrets.TELEGRAM_MESSAGE_THREAD_ID }}
         TELEGRAM_CHAT_TOPIC_IDS_JSON: ${{ secrets.TELEGRAM_CHAT_TOPIC_IDS_JSON }}
       run: |
+        export TELEGRAM_BOT_TOKEN="${_T_MAIN:-${_T_ALT}}"
+        unset _T_MAIN _T_ALT
+        if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+          echo "::error::找不到 Bot Token。請在 Actions **Secrets**（非 Variables）新增 TELEGRAM_BOT_TOKEN，或備用名 TELEGRAM_TOKEN。若放在 Environment secrets，請在本 job 加上 environment: <環境名>。"
+          exit 1
+        fi
         echo "▶ 模式：send-only（固定）"
         python main.py --send-only

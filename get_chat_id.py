@@ -11,15 +11,16 @@ import os
 import requests
 
 try:
-    from config import TELEGRAM_BOT_TOKEN
+    from config import get_telegram_bot_token
 except ImportError:
-    TELEGRAM_BOT_TOKEN = None
+    get_telegram_bot_token = None
 
 def _token():
-    t = (TELEGRAM_BOT_TOKEN or "").strip() if TELEGRAM_BOT_TOKEN else ""
-    if not t:
-        t = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
-    return t or None
+    if get_telegram_bot_token:
+        t = get_telegram_bot_token()
+        if t:
+            return t
+    return (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip() or None
 
 def main():
     token = _token()
