@@ -67,7 +67,8 @@ def send_to_all_chats(msg_today, report_compare, bot_token, chat_ids, send_to_te
         random.shuffle(shuffled_ids)
         print(f"[i] 傳送順序隨機排列，共 {len(shuffled_ids)} 個目標")
 
-    all_ok = True
+    ok_targets = []
+    bad_targets = []
     for idx, cid in enumerate(shuffled_ids):
         # 切換不同目標之間加入隨機停頓（4～12 秒）
         if idx > 0:
@@ -80,9 +81,21 @@ def send_to_all_chats(msg_today, report_compare, bot_token, chat_ids, send_to_te
         msg_wait = random.uniform(3.0, 8.0)
         _time.sleep(msg_wait)
         ok2 = send_to_telegram_fn(report_compare, bot_token, cid, thread_id)
-        if not (ok1 and ok2):
-            all_ok = False
-    return all_ok
+        if ok1 and ok2:
+            ok_targets.append(cid)
+        else:
+            bad_targets.append((cid, ok1, ok2))
+
+    for cid, ok1, ok2 in bad_targets:
+        print(
+            f"[!] Chat {cid} 發送不完整：今日明細={'OK' if ok1 else '失敗'}，"
+            f"變化報告={'OK' if ok2 else '失敗'}（常見：chat not found＝ID 錯誤、Bot 未入群、"
+            f"超級群組 ID 須為 -100 開頭）"
+        )
+    if ok_targets and bad_targets:
+        print(f"[i] 已成功 {len(ok_targets)} 個目標，失敗 {len(bad_targets)} 個；請修正失敗的 Chat ID 或 GitHub Secret。")
+    # 至少一個目標兩則都成功即視為成功，避免單一錯誤 ID 讓整個 workflow 失敗
+    return len(ok_targets) > 0
 
 def _date_str(dt):
     """統一日期格式：YYYY/M/D"""
@@ -215,9 +228,9 @@ def send_messages_only():
     print(f"[i] Chat IDs: {chat_ids}")
     ok = send_to_all_chats(msg_today, report_compare, bot_token, chat_ids, send_fn)
     if ok:
-        print("[OK] 訊息已成功發送到所有設定對象\n")
+        print("[OK] 至少一個聊天目標已成功收到兩則訊息；若日誌有 [!] 請修正對應 Chat ID 或 Secret。\n")
     else:
-        print("[FAIL] 部分或全部訊息發送失敗！\n")
+        print("[FAIL] 所有聊天目標皆發送失敗，請檢查 Chat ID、Bot 是否入群、Token。\n")
         print("="*60 + "\n")
         import sys; sys.exit(1)
     print("="*60 + "\n")
