@@ -15,22 +15,16 @@ on:
           - fetch_only
           - send_only
         default: full
-      github_environment:
-        description: 'Bot token 若建在 GitHub Environment 選其名稱；僅用 Repository secrets 請選 __none__'
-        type: choice
-        required: true
-        options:
-          - __none__
-          - production
-        default: __none__
 
 jobs:
   daily:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # 手動執行且 token 在 Environment 時選 production（或改成你的環境名並同步 options）；排程固定不綁 Environment。
-    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.github_environment != '__none__' && inputs.github_environment || '' }}
+    # 若 Bot token 只放在 GitHub「Environments」：請取消下一行註解並改成你的環境名稱。
+    # 勿使用「空白 environment」或動態 ${{ }} 綁 environment，否則可能讀不到 Repository 的 Actions Secrets。
+    # environment: production
+
     env:
       SKIP_WEEKEND_SEND: ${{ secrets.SKIP_WEEKEND_SEND }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -108,10 +102,10 @@ jobs:
       - name: 準備 TELEGRAM_BOT_TOKEN（下一步 send-only 使用）
         if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode != 'fetch_only') }}
         env:
-          _TG0: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          _TG1: ${{ secrets.TELEGRAM_TOKEN }}
-          _TG2: ${{ secrets.BOT_TOKEN }}
-          _TG_VAR: ${{ vars.TELEGRAM_ACTIONS_BOT_TOKEN }}
+          _TG0: ${{ secrets['TELEGRAM_BOT_TOKEN'] }}
+          _TG1: ${{ secrets['TELEGRAM_TOKEN'] }}
+          _TG2: ${{ secrets['BOT_TOKEN'] }}
+          _TG_VAR: ${{ vars['TELEGRAM_ACTIONS_BOT_TOKEN'] }}
         run: |
           echo "repo=${GITHUB_REPOSITORY} event=${{ github.event_name }}"
           TG="$(printf '%s' "${_TG0:-}" | tr -d '\r\n')"
@@ -119,10 +113,12 @@ jobs:
           if [ -z "$TG" ]; then TG="$(printf '%s' "${_TG2:-}" | tr -d '\r\n')"; fi
           if [ -z "$TG" ]; then TG="$(printf '%s' "${_TG_VAR:-}" | tr -d '\r\n')"; fi
           if [ -z "$TG" ]; then
-            echo "::error::此 run 讀不到 TELEGRAM_BOT_TOKEN／TELEGRAM_TOKEN／BOT_TOKEN。請確認："
-            echo "::error::1) Repo Settings → Secrets and variables → Actions → Secrets 已建立 TELEGRAM_BOT_TOKEN（勿放在 Variables）。"
-            echo "::error::2) 若建在 GitHub Environment：手動執行 workflow 時選擇正確的 github_environment；排程只會讀 Repository secrets。"
-            echo "::error::3) 臨時除錯可設 Repository Variable TELEGRAM_ACTIONS_BOT_TOKEN（僅限私人倉庫，勿對外公開）。"
+            echo "::error::此 run 讀不到 TELEGRAM_BOT_TOKEN／TELEGRAM_TOKEN／BOT_TOKEN。"
+            echo "::notice::Secrets 檢查頁: https://github.com/${GITHUB_REPOSITORY}/settings/secrets/actions（須在 Secrets 分頁，不是 Variables）"
+            echo "::error::1) 確認本倉庫（${GITHUB_REPOSITORY}）已建立名稱完全符合的 Secret：TELEGRAM_BOT_TOKEN"
+            echo "::error::2) 若 token 只建在 GitHub Environment：請在本檔 jobs.daily 下取消註解 environment: <你的環境名>"
+            echo "::error::3) 臨時除錯可設 Repository Variable TELEGRAM_ACTIONS_BOT_TOKEN（僅私人倉庫）"
+            echo "::error::4) 若使用 Organization secrets：請在 Org Settings 確認已將該 secret 授權給此倉庫"
             exit 1
           fi
           {

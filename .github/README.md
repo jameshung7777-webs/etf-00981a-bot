@@ -30,6 +30,6 @@
 
 - 工作流程使用 UTC 時間，台灣時間 16:30 = UTC 08:30
 - 如需修改執行時間，編輯 `.github/workflows/daily-pipeline.yml` 中的 cron 設定
-- Bot token 若在 **GitHub Environment**：手動 Run workflow 時將 `github_environment` 選成該環境名（預設 `production` 可改 workflow options）；排程只會讀 **Repository** 的 Actions Secrets
+- Bot token 若在 **GitHub Environment**：請在 `.github/workflows/daily-pipeline.yml` 的 `jobs.daily` 底下取消註解 `environment: <環境名>`（勿使用空白或動態 `environment` 表達式，否則可能讀不到 Repository 的 Secrets）
 - 臨時除錯可設 Repository **Variable** `TELEGRAM_ACTIONS_BOT_TOKEN`（勿用於公開倉庫；正式請用 Secrets）
 - 確保 Secrets 已正確設定，否則 Telegram 通知會失敗
