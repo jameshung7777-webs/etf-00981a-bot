@@ -24,7 +24,7 @@ def test_requests_fetch():
     print("=" * 50)
     try:
         from scraper_requests import fetch_holdings_requests
-        holdings = fetch_holdings_requests()
+        holdings, _meta = fetch_holdings_requests()
         if holdings and len(holdings) > 0:
             print(f"   OK: 取得 {len(holdings)} 檔持股，前 3 筆: {holdings[:3]}")
             return True

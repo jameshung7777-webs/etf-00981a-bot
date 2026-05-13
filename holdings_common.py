@@ -50,11 +50,127 @@ def _resolve_weight_pct(item):
             return v
     return None
 
-def load_previous_holdings(data_file=None, current_date_str=None):
-    """載入「上一筆」持股快照做比較：依 JSON 內 date，嚴格早於今日且日期最新者。
 
-    不比對「UTC 日曆昨天」或檔名日期（易與台灣日切錯位）；改掃描所有 holdings_data_*.json
-    與 holdings_data.json，選上一個存檔業務日，週一會自動對到上一個交易日檔案（若 repo 內有）。
+def parse_disclosure_date_from_html(text):
+    """從口袋證券持股頁等 HTML 擷取「資料日期」「更新時間」或內嵌 JSON 的 date，取日曆上**最新**一筆（YYYY/M/D）。
+
+    頁面上常有多處「資料日期：」模板（含舊的靜態字），若只用 re.search 第一個命中會永遠卡在某天（例如一直 5/12）。
+    """
+    if not text:
+        return None
+    patterns = (
+        r"資料日期\s*[：:]\s*(\d{4})\s*[./年\-]\s*(\d{1,2})\s*[./月\-]\s*(\d{1,2})",
+        r"更新時間\s*[：:]\s*(\d{4})\s*[./年\-]\s*(\d{1,2})\s*[./月\-]\s*(\d{1,2})",
+        r'"date"\s*:\s*"(\d{4})[/-](\d{1,2})[/-](\d{1,2})"',
+        r"asOf[Dd]ate\s*[:=]\s*[\"']?(\d{4})[/-](\d{1,2})[/-](\d{1,2})",
+    )
+    best = None
+    for pat in patterns:
+        for m in re.finditer(pat, text):
+            try:
+                y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                cand = datetime(y, mo, d).date()
+            except (ValueError, IndexError):
+                continue
+            if best is None or cand > best:
+                best = cand
+    if best is None:
+        return None
+    return f"{best.year}/{best.month}/{best.day}"
+
+
+def coerce_snapshot_date_for_save(disclosure_str, taiwan_today_str):
+    """決定寫入 holdings JSON 的 date：優先網頁擷取；若明顯過舊（相對台灣日）則改採台灣當日，避免卡死舊日。"""
+    parts = str(taiwan_today_str or "").strip().replace("-", "/").split("/")
+    tw_d = None
+    if len(parts) >= 3:
+        try:
+            tw_d = datetime(int(parts[0]), int(parts[1]), int(parts[2])).date()
+        except (ValueError, TypeError):
+            pass
+    if not tw_d:
+        tw = datetime.now(timezone(timedelta(hours=8)))
+        tw_d = tw.date()
+        taiwan_today_str = f"{tw_d.year}/{tw_d.month}/{tw_d.day}"
+
+    if not disclosure_str or not str(disclosure_str).strip():
+        return taiwan_today_str
+
+    ps = str(disclosure_str).strip().replace("-", "/").split("/")
+    if len(ps) < 3:
+        return taiwan_today_str
+    try:
+        d_dis = datetime(int(ps[0]), int(ps[1]), int(ps[2])).date()
+    except (ValueError, TypeError):
+        return taiwan_today_str
+
+    if d_dis > tw_d:
+        print(f"[i] 網頁擷取日 {disclosure_str} 晚於台灣今日 {taiwan_today_str}，改用台灣日寫入。")
+        return taiwan_today_str
+
+    if (tw_d - d_dis).days > 10:
+        print(
+            f"[i] 網頁擷取日 {disclosure_str} 早於台灣今日 {taiwan_today_str} 超過 10 天，"
+            f"疑似誤判靜態字，改用台灣日寫入。"
+        )
+        return taiwan_today_str
+
+    return f"{d_dis.year}/{d_dis.month}/{d_dis.day}"
+
+
+def _score_holdings_raw_list(lst):
+    """粗分：有效持股列數（4 位代號、有張數／股數、非垃圾名）。"""
+    if not isinstance(lst, list) or len(lst) < 3:
+        return -1
+    n = 0
+    for item in lst[:400]:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code", item.get("stockCode", ""))).strip()
+        if len(code) != 4 or not code.isdigit() or code in ("0098", "2026"):
+            continue
+        name = str(item.get("name", item.get("stockName", ""))).strip()
+        if _is_garbage_name(name):
+            continue
+        try:
+            sh = int(item.get("shares", item.get("quantity", 0)) or 0)
+        except (TypeError, ValueError):
+            continue
+        if sh <= 0:
+            continue
+        n += 1
+    return n
+
+
+def extract_holdings_list_from_embedded_json(text):
+    """從整段 HTML/JS 中，用 JSONDecoder 對齊 `"holdings": [` 後切出陣列，取「看起來最像真持股表」的一筆。
+
+    避免正則 `.*?` 誤匹配頁面上其他小型 JSON 或殘段。"""
+    if not text:
+        return None
+    dec = json.JSONDecoder()
+    best, best_sc = None, -1
+    for m in re.finditer(r'"holdings"\s*:\s*\[', text):
+        start = m.start() + m.group().rfind("[")
+        try:
+            data, _end = dec.raw_decode(text, start)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, list):
+            continue
+        sc = _score_holdings_raw_list(data)
+        if sc > best_sc:
+            best_sc, best = sc, data
+    if best is not None and best_sc >= 8:
+        return best
+    return None
+
+
+def load_previous_holdings(data_file=None, current_date_str=None):
+    """載入「上一筆」持股快照做比較：只依 JSON 內 `date`（業務日），嚴格早於今日且該欄位最大者。
+
+    同一業務日若因重複抓取有多個檔，**不**取檔名／時間最晚的那一檔，改取**最早一檔**（檔名 HHMM 最小，無則 mtime 最早），
+    避免「一天抓兩次」時誤用第二次快照當基準。檔名日期僅在無法用 JSON date 篩選時當 fallback。
     current_date_str：今日持股的 date（與 holdings_data.json 一致）；若省略則用台灣日期。
     data_file：若指定路徑則只讀該檔（不做日期篩選）。"""
     import glob
@@ -115,6 +231,16 @@ def load_previous_holdings(data_file=None, current_date_str=None):
         y, mo, d, hhmm = map(int, m.groups())
         return datetime(y, mo, d).date(), hhmm
 
+    def _path_fetch_order_key(path):
+        """同日多檔時用來排序：數字越大＝檔名時間越晚；與 min() 併用＝取當日第一次抓取。"""
+        m = _fn_re.search(os.path.basename(path))
+        if m:
+            return (0, int(m.group(4)))
+        try:
+            return (1, os.path.getmtime(path))
+        except OSError:
+            return (2, 0.0)
+
     def _finalize(raw, chosen_path, force_same_day=False):
         out = _clean_payload(raw)
         if not out:
@@ -147,7 +273,7 @@ def load_previous_holdings(data_file=None, current_date_str=None):
     if candidates:
         max_d = max(c[0] for c in candidates)
         same_day = [c for c in candidates if c[0] == max_d]
-        _, chosen_path, raw = max(same_day, key=lambda c: c[1])
+        _, chosen_path, raw = min(same_day, key=lambda c: _path_fetch_order_key(c[1]))
         try:
             return _finalize(raw, chosen_path, False)
         except Exception as e:
@@ -166,41 +292,43 @@ def load_previous_holdings(data_file=None, current_date_str=None):
         if fd < current_d:
             fd_prev.append((fd, hhmm, path))
     if fd_prev:
-        fd_prev.sort(key=lambda x: (x[0], x[1]), reverse=True)
-        _, _, path = fd_prev[0]
+        max_fd = max(x[0] for x in fd_prev)
+        pool = [x for x in fd_prev if x[0] == max_fd]
+        _, _, path = min(pool, key=lambda x: x[1])
         try:
             with open(path, encoding="utf-8") as f:
                 raw = json.load(f)
-            print("[i] 提示：以檔名日期選出基準（JSON 內 date 未早於今日之可用檔）")
+            print("[i] 提示：以檔名日期選出基準（JSON 內 date 未早於今日之可用檔）；同日多檔取最早 HHMM")
             return _finalize(raw, path, False)
         except Exception as e:
             print(f"載入歷史數據時發生錯誤: {e}")
             return None
 
-    # ── 同日第二新快照：今天跑兩趟以上、檔名皆為今日且 JSON date 同為今日時，取 HHMM 次新一檔與 holdings_data.json 比
+    # ── 同日多次抓取：檔名皆為今日、JSON date 皆為今日且無「早於今日」的 JSON 時，取「當日最早一檔」與 holdings_data.json（通常為最後一次寫入）比
     same_fname_day = []
     for path in dated_paths:
         fd, hhmm = _path_file_date_time(path)
         if fd == current_d:
             same_fname_day.append((hhmm, path))
-    same_fname_day.sort(reverse=True)
+    same_fname_day.sort()
     if len(same_fname_day) >= 2:
-        _, path = same_fname_day[1]
+        _, path = same_fname_day[0]
         try:
             with open(path, encoding="utf-8") as f:
                 raw = json.load(f)
-            print("[i] 提示：使用同日「次新」快照與最新 holdings_data.json 比較持股變化")
+            print("[i] 提示：使用同日「最早」快照與最新 holdings_data.json 比較持股變化")
             return _finalize(raw, path, True)
         except Exception as e:
             print(f"載入歷史數據時發生錯誤: {e}")
             return None
 
-    print("[i] 找不到可對照的歷史持股檔（需：JSON date 早於今日、或檔名日期早於今日、或同日至少兩個 *_HHMM.json）")
+    print("[i] 找不到可對照的歷史持股檔（需：JSON date 早於今日、或檔名日期早於今日、或同日至少兩個 *_HHMM.json 以最早檔為基準）")
     return None
 
 def save_holdings(holdings, date_str, data_file=None):
     """保存當前持股數據。會寫入：帶日期時間的檔案 + holdings_data.json（供下次比較用）"""
-    now = datetime.now()
+    tw = timezone(timedelta(hours=8))
+    now = datetime.now(tw)
     parts = str(date_str or "").split("/")
     if not parts or len(parts[0]) != 4:
         date_str = f"{now.year}/{now.month}/{now.day}"
@@ -283,13 +411,19 @@ def compare_holdings(current, previous):
         'decreased': decreased
     }
 
-def format_today_holdings(holdings, date_str):
-    """格式化「今日持股」訊息（供 Telegram 第一則）；僅含乾淨項目，避免 CSS/HTML 混入"""
+def format_today_holdings(holdings, date_str, send_date_str=None):
+    """格式化「今日持股」訊息（供 Telegram 第一則）；僅含乾淨項目，避免 CSS/HTML 混入。
+
+    send_date_str：若與 date_str 不同（例如檔案仍標舊日但實際已於台灣曆某日發送），標題會並列兩者。
+    """
     clean = [h for h in holdings
              if isinstance(h, dict) and h.get('name') and h.get('code')
              and not _is_garbage_code(str(h.get('code', '')))
              and not _is_garbage_name(str(h.get('name', '')))]
-    lines = [f"00981A 今日持股明細（{date_str}）", ""]
+    if send_date_str and send_date_str != date_str:
+        lines = [f"00981A 今日持股明細（資料日 {date_str}｜發送日 {send_date_str}）", ""]
+    else:
+        lines = [f"00981A 今日持股明細（{date_str}）", ""]
     has_weight = any(_resolve_weight_pct(h) is not None for h in clean)
     total_shares = sum(int(h.get('shares', 0) or 0) for h in clean) or 0
     if has_weight:

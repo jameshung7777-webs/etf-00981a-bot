@@ -119,7 +119,7 @@ def _parse_slash_date_main(s):
     return None
 
 def _should_compare_holdings_diff(previous_data, today_str):
-    """前一檔業務日嚴格早於今日，或為同日「次新」強制比對時，才跑 compare。"""
+    """前一檔業務日嚴格早於今日，或為同日「最早快照」強制比對時，才跑 compare。"""
     if not previous_data:
         return False
     if previous_data.get("_force_compare_with_today"):
@@ -152,32 +152,35 @@ def fetch_data_only():
     print(f"執行時間（台灣）: {today.strftime('%Y-%m-%d %H:%M:%S')}\n")
     
     current_holdings = None
-    
+    disclosure_date_str = None
+
     # 先試 requests，失敗再試 Selenium
     try:
         from scraper_requests import fetch_holdings_requests
         print(f"正在抓取 {today_str} 的持股數據（使用 requests）...")
-        current_holdings = fetch_holdings_requests()
+        current_holdings, disclosure_date_str = fetch_holdings_requests()
     except Exception as e:
         print(f"requests 失敗: {e}")
-    
+
     if not current_holdings:
         try:
             from scraper_selenium import fetch_holdings_selenium
             print(f"正在抓取 {today_str} 的持股數據（使用 Selenium）...")
-            _r = [None]
+            _r = [(None, None)]
+
             def _run():
                 try:
                     _r[0] = fetch_holdings_selenium()
                 except Exception as ex:
                     print(f"Selenium 執行錯誤: {ex}")
+
             t = threading.Thread(target=_run, daemon=True)
             t.start()
             t.join(timeout=SELENIUM_TIMEOUT)
-            current_holdings = _r[0]
+            current_holdings, disclosure_date_str = _r[0]
         except Exception as e:
             print(f"Selenium 失敗: {e}")
-    
+
     if not current_holdings:
         print("[FAIL] 無法抓取持股數據")
         print("\n提示:")
@@ -191,9 +194,17 @@ def fetch_data_only():
         
         return False
     
+    from holdings_common import coerce_snapshot_date_for_save
+
+    save_date_str = coerce_snapshot_date_for_save(disclosure_date_str, today_str)
+    print(
+        f"[i] holdings JSON date 將寫入 {save_date_str}（台灣執行日 {today_str}；"
+        f"網頁擷取 raw：{disclosure_date_str or '—'}）"
+    )
+
     _, _, save_fn, _, _, _, _ = _get_scraper_modules()
-    save_fn(current_holdings, today_str)
-    print(f"[OK] 已保存 {today_str} 的持股數據（共 {len(current_holdings)} 檔）")
+    save_fn(current_holdings, save_date_str)
+    print(f"[OK] 已保存 {save_date_str} 的持股數據（共 {len(current_holdings)} 檔）")
     print("="*60 + "\n")
     return True
 
@@ -242,10 +253,16 @@ def send_messages_only():
     with open(data_file, "r", encoding="utf-8") as f:
         data = json.load(f)
     current_holdings = data.get("holdings", [])
-    today_str = data.get("date", today_str)
-    
+    file_date_str = data.get("date") or _date_str(_now_taiwan())
+    run_date_str = _date_str(_now_taiwan())
+    today_str = file_date_str
+
+    fd_json = _parse_slash_date_main(file_date_str)
+    rd_tw = _now_taiwan().date()
+    send_note_date = run_date_str if fd_json and fd_json < rd_tw else None
+
     previous_data = load_prev(current_date_str=today_str)
-    msg_today = format_today(current_holdings, today_str)
+    msg_today = format_today(current_holdings, file_date_str, send_note_date)
 
     if _should_compare_holdings_diff(previous_data, today_str):
         prev_plain = {k: v for k, v in previous_data.items() if not str(k).startswith("_")}
@@ -254,13 +271,13 @@ def send_messages_only():
             report_compare = format_report(changes, prev_plain.get("date", ""), today_str)
         else:
             report_compare = (
-                f"00981A 持股更新（{yesterday_str} → {today_str}）\n\n（無法產生變化比較）\n\n" + msg_today
+                f"00981A 持股更新（{yesterday_str} → {file_date_str}）\n\n（無法產生變化比較）\n\n" + msg_today
             )
     else:
         if not previous_data:
-            print("[i] 無歷史快照可比較（請確認 repo 內有 holdings_data_*.json，且業務日早於今日或同日至少兩筆時間檔）。")
+            print("[i] 無歷史快照可比較（請確認 repo 內有 holdings_data_*.json，且 JSON 業務日早於今日，或同日至少兩筆時間檔以最早檔為基準）。")
         report_compare = (
-            f"00981A 持股更新（{yesterday_str} → {today_str}）\n\n（無前日資料可比較）\n\n" + msg_today
+            f"00981A 持股更新（{yesterday_str} → {file_date_str}）\n\n（無前日資料可比較）\n\n" + msg_today
         )
 
     _warn_len = 3500  # Telegram 單則約 4096，提前於日誌警示

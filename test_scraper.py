@@ -10,7 +10,7 @@ def test_fetch():
     print("開始測試抓取功能...")
     print("="*60)
     
-    holdings = fetch_holdings_selenium()
+    holdings, _ = fetch_holdings_selenium()
     
     if holdings:
         print(f"\n[OK] 成功抓取 {len(holdings)} 檔股票")

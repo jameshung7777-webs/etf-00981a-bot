@@ -21,6 +21,8 @@ from holdings_common import (
     _is_garbage_name,
     _parse_percent,
     _resolve_weight_pct,
+    extract_holdings_list_from_embedded_json,
+    parse_disclosure_date_from_html,
     load_previous_holdings,
     save_holdings,
     compare_holdings,
@@ -28,6 +30,7 @@ from holdings_common import (
     format_today_holdings,
     send_to_telegram,
 )
+from scraper_requests import _table_column_indices
 
 def setup_driver():
     """設置 Chrome WebDriver（支援 GitHub Actions 環境）"""
@@ -108,7 +111,10 @@ def setup_driver():
     return None
 
 def fetch_holdings_selenium():
-    """使用 Selenium 抓取 00981A 持股明細"""
+    """使用 Selenium（或 API）抓取 00981A 持股明細。
+
+    回傳 (持股 list 或 None, 網頁公告日字串或 None)。
+    """
     url = "https://www.pocket.tw/etf/tw/00981A/fundholding"
     
     # 首先嘗試直接 API 請求（多個可能的端點）
@@ -173,7 +179,7 @@ def fetch_holdings_selenium():
                         
                         if holdings:
                             print(f"[OK] 從 API 成功獲取 {len(holdings)} 筆數據: {api_url}")
-                            return holdings
+                            return (holdings, None)
                 except json.JSONDecodeError as e:
                     print(f"  JSON 解析失敗: {e}")
                     print(f"  回應內容前 200 字元: {response.text[:200]}")
@@ -208,13 +214,14 @@ def fetch_holdings_selenium():
     th.join(timeout=SELENIUM_DRIVER_TIMEOUT)
     if th.is_alive():
         print(f"[!] Selenium 啟動逾時（{SELENIUM_DRIVER_TIMEOUT} 秒），跳過")
-        return None
+        return (None, None)
     driver = driver_result[0] if driver_result else None
     if not driver:
         if driver_error:
             print(f"[!] Selenium 啟動失敗: {driver_error[0]}")
-        return None
+        return (None, None)
     
+    page_date = None
     try:
         print("使用 Selenium 載入網頁...")
         driver.set_page_load_timeout(40)  # 設定頁面載入超時（增加到 40 秒）
@@ -252,97 +259,93 @@ def fetch_holdings_selenium():
         # 額外等待 JavaScript 執行
         time.sleep(3)
         print("  開始解析頁面內容...")
-        
+
+        page_source = driver.page_source
+        page_date = parse_disclosure_date_from_html(page_source)
+        if page_date:
+            print(f"  網頁「資料日期／更新時間」: {page_date}")
+
         holdings = []
-        
-        # 方法1: 查找持股明細表格（正確的表格結構）
-        try:
-            tables = driver.find_elements(By.TAG_NAME, "table")
-            print(f"  找到 {len(tables)} 個表格，開始解析...")
-            
-            for table_idx, table in enumerate(tables):
-                rows = table.find_elements(By.TAG_NAME, "tr")
-                if len(rows) < 2:
-                    continue
-                
-                print(f"  解析表格 #{table_idx+1}，有 {len(rows)} 行")
-                
-                # 檢查表頭，確認是持股明細表格
-                header_row = rows[0]
-                header_text = header_row.text.lower()
-                if '代號' not in header_text and '名稱' not in header_text:
-                    # 可能不是持股明細表格，跳過
-                    continue
-                
-                print(f"  確認是持股明細表格，開始解析數據行...")
-                
-                for row_idx, row in enumerate(rows[1:], 1):
-                    try:
-                        cells = row.find_elements(By.TAG_NAME, "td")
-                        if len(cells) < 4:  # 至少需要：代號、名稱、權重、持有數
-                            continue
-                        
-                        # 解析表格結構：代號 | 名稱 | 權重 | 持有數 | 單位
-                        code_text = cells[0].text.strip()
-                        name_text = cells[1].text.strip() if len(cells) > 1 else ""
-                        weight_text = cells[2].text.strip() if len(cells) > 2 else ""  # 權重在第3列（索引2）
-                        holding_text = cells[3].text.strip() if len(cells) > 3 else ""  # 持有數在第4列（索引3）
-                        unit_text = cells[4].text.strip() if len(cells) > 4 else ""  # 單位在第5列（索引4）
-                        
-                        # 提取股票代號（4位數字）
-                        code_match = re.search(r'^(\d{4})', code_text)
-                        if not code_match:
-                            # 跳過非股票項目（如 CASH, MARGIN 等）
-                            continue
-                        
-                        code = code_match.group(1)
-                        
-                        # 過濾掉現金、保證金等非股票項目
-                        if code_text.upper() in ['CASH', 'MARGIN', 'PFUR', 'RDI'] or '現金' in name_text or '保證金' in name_text:
-                            continue
-                        
-                        # 提取持有數（股數）
-                        # 移除千分位逗號
-                        holding_clean = holding_text.replace(',', '').replace('，', '')
-                        shares_match = re.search(r'([\d]+)', holding_clean)
-                        
-                        if not shares_match:
-                            continue
-                        
-                        shares_raw = int(shares_match.group(1))
-                        
-                        # 根據單位轉換：如果是"股"，需要轉換為張數（1張=1000股）
-                        # 如果是"元"，跳過（現金項目）
-                        if '元' in unit_text or 'NTD' in unit_text.upper():
-                            continue
-                        
-                        # 轉換為張數（1張 = 1000股）
-                        shares = shares_raw // 1000
-                        
-                        if shares > 0 and len(code) == 4 and code.isdigit():
-                            item = {
-                                'code': code,
-                                'name': name_text,
-                                'shares': shares
-                            }
-                            w = _parse_percent(weight_text)
-                            if w is not None:
-                                item['weight_pct'] = w
-                            holdings.append(item)
-                            if len(holdings) <= 5:  # 只顯示前5筆的調試信息
-                                print(f"    解析到: {name_text} ({code}) - {shares_raw} 股 = {shares} 張")
-                    
-                    except Exception as e:
+        emb = extract_holdings_list_from_embedded_json(page_source)
+        if emb:
+            print(f"  從頁面內嵌 JSON（\"holdings\" 陣列）擷取 {len(emb)} 列")
+            holdings = list(emb)
+
+        # 方法1: 持股明細表格（依表頭對應欄位）
+        if not holdings:
+            try:
+                tables = driver.find_elements(By.TAG_NAME, "table")
+                print(f"  找到 {len(tables)} 個表格，開始解析...")
+
+                for table_idx, table in enumerate(tables):
+                    rows = table.find_elements(By.TAG_NAME, "tr")
+                    if len(rows) < 2:
                         continue
-                
-                if holdings:
-                    print(f"  從表格 #{table_idx+1} 成功解析 {len(holdings)} 筆股票數據")
-                    break
-        except Exception as e:
-            print(f"解析表格時發生錯誤: {e}")
-            import traceback
-            traceback.print_exc()
-        
+
+                    header_row = rows[0]
+                    header_cells_raw = [c.text.strip() for c in header_row.find_elements(By.XPATH, "./*")]
+                    header_joined = " ".join(header_cells_raw)
+                    if "代號" not in header_joined and "名稱" not in header_joined:
+                        continue
+
+                    print(f"  解析表格 #{table_idx + 1}，有 {len(rows)} 行（持股明細）")
+                    ic, ina, iw, ish, iu = _table_column_indices(header_cells_raw)
+
+                    for row_idx, row in enumerate(rows[1:], 1):
+                        try:
+                            cells = [c.text.strip() for c in row.find_elements(By.XPATH, "./*")]
+                            max_idx = max(ic, ina, iw, ish)
+                            if len(cells) <= max_idx:
+                                continue
+
+                            code_text = cells[ic].strip()
+                            name_text = cells[ina].strip() if ina < len(cells) else ""
+                            weight_text = cells[iw].strip() if iw < len(cells) else ""
+                            holding_text = cells[ish].strip() if ish < len(cells) else ""
+                            unit_text = cells[iu].strip() if iu is not None and iu < len(cells) else ""
+
+                            code_match = re.search(r"^(\d{4})", code_text)
+                            if not code_match:
+                                continue
+
+                            code = code_match.group(1)
+
+                            if code_text.upper() in ["CASH", "MARGIN", "PFUR", "RDI"] or "現金" in name_text or "保證金" in name_text:
+                                continue
+
+                            holding_clean = holding_text.replace(",", "").replace("，", "")
+                            shares_match = re.search(r"([\d]+)", holding_clean)
+
+                            if not shares_match:
+                                continue
+
+                            shares_raw = int(shares_match.group(1))
+
+                            if "元" in unit_text or "NTD" in unit_text.upper():
+                                continue
+
+                            shares = shares_raw // 1000
+
+                            if shares > 0 and len(code) == 4 and code.isdigit():
+                                item = {"code": code, "name": name_text, "shares": shares}
+                                w = _parse_percent(weight_text)
+                                if w is not None:
+                                    item["weight_pct"] = w
+                                holdings.append(item)
+                                if len(holdings) <= 5:
+                                    print(f"    解析到: {name_text} ({code}) - {shares_raw} 股 = {shares} 張")
+
+                        except Exception:
+                            continue
+
+                    if holdings:
+                        print(f"  從表格 #{table_idx + 1} 成功解析 {len(holdings)} 筆股票數據")
+                        break
+            except Exception as e:
+                print(f"解析表格時發生錯誤: {e}")
+                import traceback
+                traceback.print_exc()
+
         # 方法2: 查找 div 或其他元素結構
         if not holdings:
             try:
@@ -371,72 +374,6 @@ def fetch_holdings_selenium():
             except:
                 pass
         
-        # 方法3: 從 script 標籤中提取 JSON
-        if not holdings:
-            print("嘗試從 JavaScript 中提取數據...")
-            script_tags = driver.find_elements(By.TAG_NAME, "script")
-            print(f"  找到 {len(script_tags)} 個 script 標籤")
-            
-            for i, script in enumerate(script_tags):
-                try:
-                    script_text = script.get_attribute('innerHTML') or script.text
-                    if not script_text or len(script_text) < 50:
-                        continue
-                    
-                    # 檢查是否包含相關關鍵字
-                    if not any(keyword in script_text.lower() for keyword in ['holding', '00981', 'stock', 'fund']):
-                        continue
-                    
-                    print(f"  檢查 script #{i+1} (長度: {len(script_text)})")
-                    
-                    # 查找 JSON 對象（更寬鬆的模式）
-                    json_patterns = [
-                        r'holdings["\']?\s*[:=]\s*(\[.*?\])',
-                        r'"holdings"\s*:\s*(\[.*?\])',
-                        r'data["\']?\s*[:=]\s*(\{.*?"holdings".*?\})',
-                        r'(\[.*?"code".*?\])',
-                        r'(\{.*?"code".*?\})',
-                    ]
-                    
-                    for pattern in json_patterns:
-                        try:
-                            matches = re.findall(pattern, script_text, re.IGNORECASE | re.DOTALL)
-                            for match in matches[:5]:  # 只處理前5個匹配
-                                try:
-                                    # 嘗試修復常見的 JSON 問題
-                                    match_clean = match.strip()
-                                    if not match_clean.startswith(('{', '[')):
-                                        continue
-                                    
-                                    data = json.loads(match_clean)
-                                    if isinstance(data, list) and len(data) > 0:
-                                        holdings = data
-                                        print(f"  從 script #{i+1} 成功提取列表數據")
-                                        break
-                                    elif isinstance(data, dict):
-                                        if 'holdings' in data:
-                                            holdings = data['holdings']
-                                            print(f"  從 script #{i+1} 成功提取字典數據")
-                                            break
-                                        elif 'data' in data:
-                                            holdings = data['data']
-                                            print(f"  從 script #{i+1} 成功提取 data 數據")
-                                            break
-                                except json.JSONDecodeError:
-                                    continue
-                                except Exception as e:
-                                    continue
-                            
-                            if holdings:
-                                break
-                        except Exception:
-                            continue
-                    
-                    if holdings:
-                        break
-                except Exception as e:
-                    continue
-        
         if holdings:
             # 標準化並過濾垃圾（只保留乾淨持股）
             result = []
@@ -461,7 +398,7 @@ def fetch_holdings_selenium():
             
             if result:
                 print(f"[OK] 成功解析 {len(result)} 檔股票")
-                return result
+                return (result, page_date)
             else:
                 print(f"[!] 解析到 {len(holdings)} 筆原始數據，但過濾後為空")
         
@@ -476,13 +413,13 @@ def fetch_holdings_selenium():
         except:
             pass
         
-        return None
+        return (None, page_date)
         
     except Exception as e:
         print(f"抓取數據時發生錯誤: {e}")
         import traceback
         traceback.print_exc()
-        return None
+        return (None, None)
     finally:
         driver.quit()
 
@@ -495,7 +432,7 @@ def main():
     yesterday_str = f"{yesterday.year}/{yesterday.month}/{yesterday.day}"
     print(f"正在抓取 {today_str} 的持股數據...")
     print(f"比較日期: {yesterday_str} → {today_str}")
-    current_holdings = fetch_holdings_selenium()
+    current_holdings, _page_disclosure = fetch_holdings_selenium()
     if not current_holdings:
         print("[FAIL] 無法抓取持股數據")
         print("提示: 請確保已安裝 Chrome 瀏覽器和 ChromeDriver")

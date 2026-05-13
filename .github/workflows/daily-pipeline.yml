@@ -1,5 +1,11 @@
 # 00981A：抓取 → 提交 holdings JSON → 發送 Telegram（單一 workflow）
 # 排程：台灣 16:30（UTC 08:30）一次跑完。
+#
+# 若「沒有自動跑」請檢查：
+# - GitHub 只會用「預設分支」（通常是 main）上的此檔跑 schedule；請確認已 merge 且預設分支正確。
+# - 倉庫 60 天無活動時，GitHub 可能停用排程；Actions 分頁左側可重新啟用。
+# - Fork 的倉庫預設不跑 schedule；Settings → Actions → General 須允許 Actions。
+# - 排程可能延遲數分鐘～一小時屬正常；可用手動 workflow_dispatch 驗證。
 name: 00981A ETF 每日流程
 
 on:
@@ -112,7 +118,6 @@ jobs:
           else
             echo "無新數據需提交"
           fi
-        continue-on-error: true
 
       # 將 Bot token 寫入 GITHUB_ENV（多行語法），下一步的 python 才讀得到。
       # 失敗時會「同一格」印出 GitHub 此次注入的 secrets / vars 名稱（值已遮蔽為 ***）方便排查。
