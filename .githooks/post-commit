@@ -1,0 +1,12 @@
+#!/bin/sh
+# 每次成功 commit 後，將目前分支推送到 origin（需先執行 install-hooks.bat 啟用）。
+# 若無 origin、不在分支上、或 push 失敗，請依終端機訊息處理。
+
+branch=$(git symbolic-ref -q --short HEAD) || exit 0
+[ -n "$branch" ] || exit 0
+
+if ! git remote get-url origin >/dev/null 2>&1; then
+  exit 0
+fi
+
+exec git push -u origin "$branch"

@@ -1,0 +1,2 @@
+# Hook 腳本需 LF，避免 Windows 換行導致 shebang 異常
+.githooks/* text eol=lf
