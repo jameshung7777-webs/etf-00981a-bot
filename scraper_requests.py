@@ -3,6 +3,7 @@
 如果 Selenium 版本無法使用，可以使用這個版本
 """
 
+import os
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -13,6 +14,7 @@ from holdings_common import (
     _parse_percent,
     _resolve_weight_pct,
     extract_holdings_list_from_embedded_json,
+    normalize_equity_lots_from_api_value,
     parse_disclosure_date_from_html,
     load_previous_holdings,
     save_holdings,
@@ -66,6 +68,7 @@ def fetch_holdings_requests():
     第二個值若存在，應寫入 JSON 的 date，避免與本機日曆與公告日不一致。
     """
     url = "https://www.pocket.tw/etf/tw/00981A/fundholding"
+    verify_ssl = os.getenv("ETF_REQUESTS_VERIFY_SSL", "1").strip().lower() not in ("0", "false", "no")
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -76,7 +79,7 @@ def fetch_holdings_requests():
     
     try:
         print("正在請求網頁...")
-        response = requests.get(url, headers=headers, timeout=30)
+        response = requests.get(url, headers=headers, timeout=30, verify=verify_ssl)
         response.raise_for_status()
         print(f"  網頁回應狀態碼: {response.status_code}")
         html = response.text
@@ -136,18 +139,15 @@ def fetch_holdings_requests():
                     if code_text.upper() in ["CASH", "MARGIN", "PFUR", "RDI"] or "現金" in name_text or "保證金" in name_text:
                         continue
 
-                    holding_clean = holding_text.replace(",", "").replace("，", "")
-                    shares_match = re.search(r"([\d]+)", holding_clean)
-
-                    if not shares_match:
+                    digits = re.sub(r"[^\d]", "", holding_text or "")
+                    if not digits:
                         continue
-
-                    shares_raw = int(shares_match.group(1))
+                    shares_raw = int(digits)
 
                     if "元" in unit_text or "NTD" in unit_text.upper():
                         continue
 
-                    shares = shares_raw // 1000
+                    shares = normalize_equity_lots_from_api_value(shares_raw)
 
                     if shares > 0 and len(code) == 4 and code.isdigit() and not _is_garbage_name(name_text):
                         item = {"code": code, "name": name_text, "shares": shares}
@@ -190,9 +190,10 @@ def fetch_holdings_requests():
                 code = str(item_src.get("code", item_src.get("stockCode", ""))).strip()
                 name = str(item_src.get("name", item_src.get("stockName", ""))).strip()
                 try:
-                    shares = int(item_src.get("shares", item_src.get("quantity", 0)) or 0)
+                    shares_raw = int(item_src.get("shares", item_src.get("quantity", 0)) or 0)
                 except (ValueError, TypeError):
                     continue
+                shares = normalize_equity_lots_from_api_value(shares_raw)
                 if len(code) != 4 or not code.isdigit() or shares <= 0:
                     continue
                 if code in ("0098", "2026"):

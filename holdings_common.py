@@ -28,6 +28,28 @@ def _is_garbage_name(name):
 def _is_garbage_code(code):
     return code in ('0098', '2026')
 
+def normalize_equity_lots_from_api_value(shares_val):
+    """將 API／表格／JSON 的持股數統一為「張」。
+
+    - 大於等於 10 萬：視為股數，一律除以 1000（含貿聯 4,703,848 股等非整千股）。
+    - 1 萬～10 萬且為千股整除：亦視為股數（小型成分）。
+    - 其餘視為已是張數。
+    """
+    if shares_val is None:
+        return 0
+    try:
+        v = int(float(shares_val))
+    except (TypeError, ValueError):
+        return 0
+    if v <= 0:
+        return 0
+    if v >= 100_000:
+        return v // 1000
+    if v >= 10_000 and v % 1000 == 0:
+        return v // 1000
+    return v
+
+
 def _parse_percent(text):
     """把百分比字串轉成 float，例如 '3.21%' -> 3.21"""
     if text is None:
@@ -63,12 +85,16 @@ def parse_disclosure_date_from_html(text):
         r"更新時間\s*[：:]\s*(\d{4})\s*[./年\-]\s*(\d{1,2})\s*[./月\-]\s*(\d{1,2})",
         r'"date"\s*:\s*"(\d{4})[/-](\d{1,2})[/-](\d{1,2})"',
         r"asOf[Dd]ate\s*[:=]\s*[\"']?(\d{4})[/-](\d{1,2})[/-](\d{1,2})",
+        # 頁面常見「2026/05/13」或「2026-05-13」單獨出現在 script / JSON
+        r"(?<![0-9])(20\d{2})[/-](\d{1,2})[/-](\d{1,2})(?![0-9])",
     )
     best = None
     for pat in patterns:
         for m in re.finditer(pat, text):
             try:
                 y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+                if not (2020 <= y <= 2035 and 1 <= mo <= 12 and 1 <= d <= 31):
+                    continue
                 cand = datetime(y, mo, d).date()
             except (ValueError, IndexError):
                 continue

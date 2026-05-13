@@ -22,6 +22,7 @@ from holdings_common import (
     _parse_percent,
     _resolve_weight_pct,
     extract_holdings_list_from_embedded_json,
+    normalize_equity_lots_from_api_value,
     parse_disclosure_date_from_html,
     load_previous_holdings,
     save_holdings,
@@ -132,11 +133,12 @@ def fetch_holdings_selenium():
         'Referer': url,
         'Origin': 'https://www.pocket.tw'
     }
-    
+    verify_ssl = os.getenv("ETF_REQUESTS_VERIFY_SSL", "1").strip().lower() not in ("0", "false", "no")
+
     for api_url in api_urls:
         try:
             print(f"  嘗試 API: {api_url}")
-            response = requests.get(api_url, headers=headers, timeout=15)
+            response = requests.get(api_url, headers=headers, timeout=15, verify=verify_ssl)
             print(f"  API 回應狀態碼: {response.status_code}")
             
             if response.status_code == 200:
@@ -162,20 +164,23 @@ def fetch_holdings_selenium():
                             if isinstance(item, dict):
                                 code = str(item.get('code', item.get('stockCode', item.get('symbol', '')))).strip()
                                 name = str(item.get('name', item.get('stockName', item.get('stock_name', '')))).strip()
-                                shares = 0
-                                if 'shares' in item:
-                                    shares = int(item.get('shares', 0)) if item.get('shares') else 0
-                                elif 'quantity' in item:
-                                    shares = int(item.get('quantity', 0)) if item.get('quantity') else 0
-                                elif 'amount' in item:
-                                    shares = int(item.get('amount', 0)) if item.get('amount') else 0
-                                
+                                raw_s = 0
+                                if "shares" in item:
+                                    raw_s = int(item.get("shares", 0)) if item.get("shares") else 0
+                                elif "quantity" in item:
+                                    raw_s = int(item.get("quantity", 0)) if item.get("quantity") else 0
+                                elif "amount" in item:
+                                    raw_s = int(item.get("amount", 0)) if item.get("amount") else 0
+                                shares = normalize_equity_lots_from_api_value(raw_s)
+
                                 if len(code) == 4 and code.isdigit() and shares > 0:
-                                    holdings.append({
-                                        'code': code,
-                                        'name': name,
-                                        'shares': shares
-                                    })
+                                    holdings.append(
+                                        {
+                                            "code": code,
+                                            "name": name,
+                                            "shares": shares,
+                                        }
+                                    )
                         
                         if holdings:
                             print(f"[OK] 從 API 成功獲取 {len(holdings)} 筆數據: {api_url}")
@@ -256,124 +261,139 @@ def fetch_holdings_selenium():
         if not element_found:
             print("  警告: 未找到預期的元素，繼續嘗試解析...")
         
-        # 額外等待 JavaScript 執行
-        time.sleep(3)
-        print("  開始解析頁面內容...")
+        # 額外等待 JavaScript 執行，並等表格列變多（SPA 載入後才有持股）
+        time.sleep(2)
+        try:
+            WebDriverWait(driver, 25).until(
+                lambda d: len(d.find_elements(By.CSS_SELECTOR, "table tr")) >= 15
+            )
+            print("  表格列已載入（>=15 tr）")
+        except Exception:
+            print("  警告: 等待表格列逾時，仍嘗試解析…")
+        time.sleep(1)
 
+        print("  開始解析頁面內容…")
         page_source = driver.page_source
         page_date = parse_disclosure_date_from_html(page_source)
         if page_date:
             print(f"  網頁「資料日期／更新時間」: {page_date}")
 
-        holdings = []
-        emb = extract_holdings_list_from_embedded_json(page_source)
-        if emb:
-            print(f"  從頁面內嵌 JSON（\"holdings\" 陣列）擷取 {len(emb)} 列")
-            holdings = list(emb)
+        def _parse_holdings_from_dom_tables():
+            rows_out = []
+            tables = driver.find_elements(By.TAG_NAME, "table")
+            print(f"  找到 {len(tables)} 個表格（DOM）")
 
-        # 方法1: 持股明細表格（依表頭對應欄位）
-        if not holdings:
-            try:
-                tables = driver.find_elements(By.TAG_NAME, "table")
-                print(f"  找到 {len(tables)} 個表格，開始解析...")
+            for table_idx, table in enumerate(tables):
+                rows = table.find_elements(By.TAG_NAME, "tr")
+                if len(rows) < 2:
+                    continue
 
-                for table_idx, table in enumerate(tables):
-                    rows = table.find_elements(By.TAG_NAME, "tr")
-                    if len(rows) < 2:
-                        continue
+                header_row = rows[0]
+                header_cells_raw = [c.text.strip() for c in header_row.find_elements(By.XPATH, "./*")]
+                header_joined = " ".join(header_cells_raw)
+                if "代號" not in header_joined and "名稱" not in header_joined:
+                    continue
 
-                    header_row = rows[0]
-                    header_cells_raw = [c.text.strip() for c in header_row.find_elements(By.XPATH, "./*")]
-                    header_joined = " ".join(header_cells_raw)
-                    if "代號" not in header_joined and "名稱" not in header_joined:
-                        continue
+                print(f"  解析表格 #{table_idx + 1}，有 {len(rows)} 行（持股明細）")
+                ic, ina, iw, ish, iu = _table_column_indices(header_cells_raw)
+                local = []
 
-                    print(f"  解析表格 #{table_idx + 1}，有 {len(rows)} 行（持股明細）")
-                    ic, ina, iw, ish, iu = _table_column_indices(header_cells_raw)
-
-                    for row_idx, row in enumerate(rows[1:], 1):
-                        try:
-                            cells = [c.text.strip() for c in row.find_elements(By.XPATH, "./*")]
-                            max_idx = max(ic, ina, iw, ish)
-                            if len(cells) <= max_idx:
-                                continue
-
-                            code_text = cells[ic].strip()
-                            name_text = cells[ina].strip() if ina < len(cells) else ""
-                            weight_text = cells[iw].strip() if iw < len(cells) else ""
-                            holding_text = cells[ish].strip() if ish < len(cells) else ""
-                            unit_text = cells[iu].strip() if iu is not None and iu < len(cells) else ""
-
-                            code_match = re.search(r"^(\d{4})", code_text)
-                            if not code_match:
-                                continue
-
-                            code = code_match.group(1)
-
-                            if code_text.upper() in ["CASH", "MARGIN", "PFUR", "RDI"] or "現金" in name_text or "保證金" in name_text:
-                                continue
-
-                            holding_clean = holding_text.replace(",", "").replace("，", "")
-                            shares_match = re.search(r"([\d]+)", holding_clean)
-
-                            if not shares_match:
-                                continue
-
-                            shares_raw = int(shares_match.group(1))
-
-                            if "元" in unit_text or "NTD" in unit_text.upper():
-                                continue
-
-                            shares = shares_raw // 1000
-
-                            if shares > 0 and len(code) == 4 and code.isdigit():
-                                item = {"code": code, "name": name_text, "shares": shares}
-                                w = _parse_percent(weight_text)
-                                if w is not None:
-                                    item["weight_pct"] = w
-                                holdings.append(item)
-                                if len(holdings) <= 5:
-                                    print(f"    解析到: {name_text} ({code}) - {shares_raw} 股 = {shares} 張")
-
-                        except Exception:
+                for row in rows[1:]:
+                    try:
+                        cells = [c.text.strip() for c in row.find_elements(By.XPATH, "./*")]
+                        max_idx = max(ic, ina, iw, ish)
+                        if len(cells) <= max_idx:
                             continue
 
-                    if holdings:
-                        print(f"  從表格 #{table_idx + 1} 成功解析 {len(holdings)} 筆股票數據")
-                        break
-            except Exception as e:
-                print(f"解析表格時發生錯誤: {e}")
-                import traceback
-                traceback.print_exc()
+                        code_text = cells[ic].strip()
+                        name_text = cells[ina].strip() if ina < len(cells) else ""
+                        weight_text = cells[iw].strip() if iw < len(cells) else ""
+                        holding_text = cells[ish].strip() if ish < len(cells) else ""
+                        unit_text = cells[iu].strip() if iu is not None and iu < len(cells) else ""
+
+                        code_match = re.search(r"^(\d{4})", code_text)
+                        if not code_match:
+                            continue
+
+                        code = code_match.group(1)
+
+                        if code_text.upper() in ["CASH", "MARGIN", "PFUR", "RDI"] or "現金" in name_text or "保證金" in name_text:
+                            continue
+
+                        digits = re.sub(r"[^\d]", "", holding_text or "")
+                        if not digits:
+                            continue
+                        shares_raw = int(digits)
+
+                        if "元" in unit_text or "NTD" in unit_text.upper():
+                            continue
+
+                        shares = normalize_equity_lots_from_api_value(shares_raw)
+
+                        if shares > 0 and len(code) == 4 and code.isdigit():
+                            item = {"code": code, "name": name_text, "shares": shares}
+                            w = _parse_percent(weight_text)
+                            if w is not None:
+                                item["weight_pct"] = w
+                            local.append(item)
+                            if len(local) <= 3:
+                                print(f"    解析到: {name_text} ({code}) raw={shares_raw} → {shares} 張")
+                    except Exception:
+                        continue
+
+                if len(local) > len(rows_out):
+                    rows_out = local
+                    print(f"  目前最佳 DOM 表格筆數: {len(rows_out)}")
+
+            return rows_out
+
+        holdings_dom = _parse_holdings_from_dom_tables()
+        emb = extract_holdings_list_from_embedded_json(page_source)
+        if emb:
+            print(f"  從頁面內嵌 JSON（\"holdings\"）擷取 {len(emb)} 列")
+
+        def _pick_dom_or_embedded(dom_h, emb_h):
+            dc = len(dom_h) if dom_h else 0
+            ec = len(emb_h) if emb_h else 0
+            if dc >= 15:
+                print(f"  [i] 採用 DOM 表格（{dc} 筆），優先於內嵌 JSON（避免快取較舊 JSON）")
+                return list(dom_h)
+            if ec >= 15:
+                print(f"  [i] 採用內嵌 JSON（{ec} 筆）")
+                return list(emb_h)
+            if dc >= ec and dc > 0:
+                print(f"  [i] 採用 DOM 表格（{dc} 筆）")
+                return list(dom_h)
+            if ec > 0:
+                print(f"  [i] 採用內嵌 JSON（{ec} 筆）")
+                return list(emb_h)
+            return []
+
+        holdings = _pick_dom_or_embedded(holdings_dom, emb)
 
         # 方法2: 查找 div 或其他元素結構
         if not holdings:
             try:
-                # 查找包含股票代號的元素
                 stock_elements = driver.find_elements(By.CSS_SELECTOR, "[class*='stock'], [class*='holding'], [data-code]")
                 for elem in stock_elements:
                     try:
                         text = elem.text.strip()
-                        code_match = re.search(r'(\d{4})', text)
+                        code_match = re.search(r"(\d{4})", text)
                         if code_match:
                             code = code_match.group(1)
-                            # 查找同一行或父元素中的數量
                             parent = elem.find_element(By.XPATH, "./..")
                             shares_text = parent.text
-                            shares_match = re.search(r'([\d,]+)', shares_text.replace(',', ''))
+                            shares_match = re.search(r"([\d,]+)", shares_text.replace(",", ""))
                             if shares_match:
-                                shares = int(shares_match.group(1).replace(',', ''))
-                                name = re.sub(r'\d{4}', '', text).strip()
-                                holdings.append({
-                                    'code': code,
-                                    'name': name,
-                                    'shares': shares
-                                })
-                    except:
+                                raw_s = int(shares_match.group(1).replace(",", ""))
+                                shares = normalize_equity_lots_from_api_value(raw_s)
+                                name = re.sub(r"\d{4}", "", text).strip()
+                                holdings.append({"code": code, "name": name, "shares": shares})
+                    except Exception:
                         continue
-            except:
+            except Exception:
                 pass
-        
+
         if holdings:
             # 標準化並過濾垃圾（只保留乾淨持股）
             result = []
@@ -383,9 +403,10 @@ def fetch_holdings_selenium():
                 code = str(item_src.get('code', item_src.get('stockCode', item_src.get('symbol', '')))).strip()
                 name = str(item_src.get('name', item_src.get('stockName', item_src.get('stock_name', '')))).strip()
                 try:
-                    shares = int(item_src.get('shares', item_src.get('quantity', item_src.get('amount', 0))) or 0)
+                    raw_s = int(item_src.get("shares", item_src.get("quantity", item_src.get("amount", 0))) or 0)
                 except (ValueError, TypeError):
                     continue
+                shares = normalize_equity_lots_from_api_value(raw_s)
                 if len(code) != 4 or not code.isdigit() or shares <= 0:
                     continue
                 if _is_garbage_code(code) or _is_garbage_name(name):
