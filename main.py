@@ -255,11 +255,21 @@ def send_messages_only():
     current_holdings = data.get("holdings", [])
     file_date_str = data.get("date") or _date_str(_now_taiwan())
     run_date_str = _date_str(_now_taiwan())
-    today_str = file_date_str
 
     fd_json = _parse_slash_date_main(file_date_str)
     rd_tw = _now_taiwan().date()
     send_note_date = run_date_str if fd_json and fd_json < rd_tw else None
+
+    # JSON 業務日若早於台灣「發送日」，load_previous 必須以台灣曆為錨，否則會選 date<昨日 → 上上業務日
+    compare_anchor_str = (
+        run_date_str if (fd_json and rd_tw and fd_json < rd_tw) else file_date_str
+    )
+    if compare_anchor_str != file_date_str:
+        print(
+            f"[i] holdings_data.json 資料日 {file_date_str} 早於台灣日 {run_date_str}，"
+            f"比較基準改以 {compare_anchor_str} 選檔（仍讀同一檔內容；若內容過舊請確認 16:30 抓取成功）。"
+        )
+    today_str = compare_anchor_str
 
     previous_data = load_prev(current_date_str=today_str)
     msg_today = format_today(current_holdings, file_date_str, send_note_date)

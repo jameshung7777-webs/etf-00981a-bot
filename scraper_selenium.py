@@ -121,6 +121,7 @@ def fetch_holdings_selenium():
     回傳 (持股 list 或 None, 網頁公告日字串或 None)。
     """
     url = "https://www.pocket.tw/etf/tw/00981A/fundholding"
+    fetch_url = f"{url}?_={int(time.time())}"
     
     # 首先嘗試直接 API 請求（多個可能的端點）
     print("嘗試從 API 獲取數據...")
@@ -233,7 +234,7 @@ def fetch_holdings_selenium():
         print("使用 Selenium 載入網頁...")
         driver.set_page_load_timeout(40)  # 設定頁面載入超時（增加到 40 秒）
         try:
-            driver.get(url)
+            driver.get(fetch_url)
             print("  網頁已載入，等待內容...")
         except Exception as e:
             print(f"  頁面載入逾時或錯誤: {type(e).__name__}: {e}")

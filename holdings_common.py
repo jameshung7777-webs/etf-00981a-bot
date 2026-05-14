@@ -228,6 +228,17 @@ def coerce_snapshot_date_for_save(disclosure_str, taiwan_today_str):
         print(f"[i] 網頁擷取日 {disclosure_str} 晚於台灣今日 {taiwan_today_str}，改用台灣日寫入。")
         return taiwan_today_str
 
+    # 資料日僅落後台灣曆 1 天時，常為頁面模板仍顯示「昨日」但實務已換日；寫入台灣曆可避免
+    # send 階段 load_previous 用舊 JSON date 當錨點，誤拿上上業務日（例：5/13 檔卻去對 5/12 基準）。
+    gap_days = (tw_d - d_dis).days
+    if gap_days == 1:
+        if os.getenv("HOLDINGS_DATE_LAG_AUTO_BUMP", "1").strip().lower() not in ("0", "false", "no"):
+            print(
+                f"[i] 網頁資料日 {disclosure_str} 為台灣日前一日（差 1 天），"
+                f"持股 JSON 改寫入 {taiwan_today_str} 以利與前一日快照對齊。"
+            )
+            return taiwan_today_str
+
     if (tw_d - d_dis).days > 10:
         print(
             f"[i] 網頁擷取日 {disclosure_str} 早於台灣今日 {taiwan_today_str} 超過 10 天，"

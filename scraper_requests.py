@@ -4,6 +4,7 @@
 """
 
 import os
+import time
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -72,18 +73,21 @@ def fetch_holdings_requests():
     第二個值若存在，應寫入 JSON 的 date，避免與本機日曆與公告日不一致。
     """
     url = "https://www.pocket.tw/etf/tw/00981A/fundholding"
+    fetch_url = f"{url}?_={int(time.time())}"
     verify_ssl = os.getenv("ETF_REQUESTS_VERIFY_SSL", "1").strip().lower() not in ("0", "false", "no")
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         'Accept-Language': 'zh-TW,zh;q=0.9,en;q=0.8',
-        'Referer': 'https://www.pocket.tw/'
+        'Referer': 'https://www.pocket.tw/',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
     }
     
     try:
         print("正在請求網頁...")
-        response = requests.get(url, headers=headers, timeout=30, verify=verify_ssl)
+        response = requests.get(fetch_url, headers=headers, timeout=30, verify=verify_ssl)
         response.raise_for_status()
         print(f"  網頁回應狀態碼: {response.status_code}")
         html = response.text
