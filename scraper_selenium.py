@@ -337,7 +337,8 @@ def fetch_holdings_selenium():
                         shares = normalize_equity_lots_raw(shares_raw, qk)
 
                         if shares > 0 and len(code) == 4 and code.isdigit():
-                            item = {"code": code, "name": name_text, "shares": shares}
+                            # 已依表頭／單位轉成「張」，最後一輪 normalize 須視為張，勿再當股除 1000
+                            item = {"code": code, "name": name_text, "shares": shares, "unit": "張"}
                             w = _parse_percent(weight_text)
                             if w is not None:
                                 item["weight_pct"] = w

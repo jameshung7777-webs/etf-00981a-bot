@@ -158,7 +158,7 @@ def fetch_holdings_requests():
                     shares = normalize_equity_lots_raw(shares_raw, qk)
 
                     if shares > 0 and len(code) == 4 and code.isdigit() and not _is_garbage_name(name_text):
-                        item = {"code": code, "name": name_text, "shares": shares}
+                        item = {"code": code, "name": name_text, "shares": shares, "unit": "張"}
                         w = _parse_percent(weight_text)
                         if w is not None:
                             item["weight_pct"] = w

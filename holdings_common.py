@@ -127,8 +127,16 @@ def _resolve_weight_pct(item):
     return None
 
 
+def _positive_weight_for_dedupe(item):
+    """去重時僅把「>0」的權重當有效；0.0% 多為表尾占位，不應覆蓋未帶權重的大張數列。"""
+    w = _resolve_weight_pct(item)
+    if w is None or w <= 0:
+        return None
+    return w
+
+
 def dedupe_holdings_by_code(rows):
-    """同股票代碼若出現多列（表尾誤列、重複列），保留權重較高者；皆無權重則取張數較大者。"""
+    """同股票代碼若出現多列（表尾誤列、重複列），保留權重較高者；皆無有效權重則取張數較大者。"""
     if not rows:
         return rows
     best = {}
@@ -138,13 +146,13 @@ def dedupe_holdings_by_code(rows):
         code = str(r.get("code") or "").strip()
         if len(code) != 4 or not code.isdigit():
             continue
-        w = _resolve_weight_pct(r)
+        w = _positive_weight_for_dedupe(r)
         sh = int(r.get("shares") or 0) or 0
         prev = best.get(code)
         if prev is None:
             best[code] = r
             continue
-        pw = _resolve_weight_pct(prev)
+        pw = _positive_weight_for_dedupe(prev)
         psh = int(prev.get("shares") or 0) or 0
         if w is not None and pw is None:
             best[code] = r
