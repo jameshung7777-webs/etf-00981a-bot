@@ -22,8 +22,11 @@ from holdings_common import (
     _parse_percent,
     _resolve_weight_pct,
     extract_holdings_list_from_embedded_json,
-    normalize_equity_lots_from_api_value,
+    json_row_quantity_kind,
+    normalize_equity_lots_raw,
     parse_disclosure_date_from_html,
+    refine_quantity_kind,
+    shares_column_header_kind,
     load_previous_holdings,
     save_holdings,
     compare_holdings,
@@ -164,14 +167,7 @@ def fetch_holdings_selenium():
                             if isinstance(item, dict):
                                 code = str(item.get('code', item.get('stockCode', item.get('symbol', '')))).strip()
                                 name = str(item.get('name', item.get('stockName', item.get('stock_name', '')))).strip()
-                                raw_s = 0
-                                if "shares" in item:
-                                    raw_s = int(item.get("shares", 0)) if item.get("shares") else 0
-                                elif "quantity" in item:
-                                    raw_s = int(item.get("quantity", 0)) if item.get("quantity") else 0
-                                elif "amount" in item:
-                                    raw_s = int(item.get("amount", 0)) if item.get("amount") else 0
-                                shares = normalize_equity_lots_from_api_value(raw_s)
+                                shares = normalize_equity_lots_raw(raw_s, json_row_quantity_kind(item))
 
                                 if len(code) == 4 and code.isdigit() and shares > 0:
                                     holdings.append(
@@ -296,6 +292,9 @@ def fetch_holdings_selenium():
 
                 print(f"  解析表格 #{table_idx + 1}，有 {len(rows)} 行（持股明細）")
                 ic, ina, iw, ish, iu = _table_column_indices(header_cells_raw)
+                hdr_kind = shares_column_header_kind(
+                    header_cells_raw[ish] if ish < len(header_cells_raw) else ""
+                )
                 local = []
 
                 for row in rows[1:]:
@@ -328,7 +327,8 @@ def fetch_holdings_selenium():
                         if "元" in unit_text or "NTD" in unit_text.upper():
                             continue
 
-                        shares = normalize_equity_lots_from_api_value(shares_raw)
+                        qk = refine_quantity_kind(hdr_kind, holding_text, unit_text)
+                        shares = normalize_equity_lots_raw(shares_raw, qk)
 
                         if shares > 0 and len(code) == 4 and code.isdigit():
                             item = {"code": code, "name": name_text, "shares": shares}
@@ -386,7 +386,7 @@ def fetch_holdings_selenium():
                             shares_match = re.search(r"([\d,]+)", shares_text.replace(",", ""))
                             if shares_match:
                                 raw_s = int(shares_match.group(1).replace(",", ""))
-                                shares = normalize_equity_lots_from_api_value(raw_s)
+                                shares = normalize_equity_lots_raw(raw_s, "auto")
                                 name = re.sub(r"\d{4}", "", text).strip()
                                 holdings.append({"code": code, "name": name, "shares": shares})
                     except Exception:
@@ -406,7 +406,8 @@ def fetch_holdings_selenium():
                     raw_s = int(item_src.get("shares", item_src.get("quantity", item_src.get("amount", 0))) or 0)
                 except (ValueError, TypeError):
                     continue
-                shares = normalize_equity_lots_from_api_value(raw_s)
+                kind = json_row_quantity_kind(item_src)
+                shares = normalize_equity_lots_raw(raw_s, kind)
                 if len(code) != 4 or not code.isdigit() or shares <= 0:
                     continue
                 if _is_garbage_code(code) or _is_garbage_name(name):

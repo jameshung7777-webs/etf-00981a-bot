@@ -14,8 +14,11 @@ from holdings_common import (
     _parse_percent,
     _resolve_weight_pct,
     extract_holdings_list_from_embedded_json,
-    normalize_equity_lots_from_api_value,
+    json_row_quantity_kind,
+    normalize_equity_lots_raw,
     parse_disclosure_date_from_html,
+    refine_quantity_kind,
+    shares_column_header_kind,
     load_previous_holdings,
     save_holdings,
     compare_holdings,
@@ -117,6 +120,9 @@ def fetch_holdings_requests():
 
                 print(f"  解析表格 #{table_idx + 1}，有 {len(rows)} 行（確認是持股明細表格）")
                 ic, ina, iw, ish, iu = _table_column_indices(header_cells_raw)
+                hdr_kind = shares_column_header_kind(
+                    header_cells_raw[ish] if ish < len(header_cells_raw) else ""
+                )
 
                 for row_idx, row in enumerate(rows[1:], 1):
                     cells = [c.get_text(strip=True) for c in row.find_all(["td", "th"])]
@@ -147,7 +153,8 @@ def fetch_holdings_requests():
                     if "元" in unit_text or "NTD" in unit_text.upper():
                         continue
 
-                    shares = normalize_equity_lots_from_api_value(shares_raw)
+                    qk = refine_quantity_kind(hdr_kind, holding_text, unit_text)
+                    shares = normalize_equity_lots_raw(shares_raw, qk)
 
                     if shares > 0 and len(code) == 4 and code.isdigit() and not _is_garbage_name(name_text):
                         item = {"code": code, "name": name_text, "shares": shares}
@@ -193,7 +200,8 @@ def fetch_holdings_requests():
                     shares_raw = int(item_src.get("shares", item_src.get("quantity", 0)) or 0)
                 except (ValueError, TypeError):
                     continue
-                shares = normalize_equity_lots_from_api_value(shares_raw)
+                kind = json_row_quantity_kind(item_src)
+                shares = normalize_equity_lots_raw(shares_raw, kind)
                 if len(code) != 4 or not code.isdigit() or shares <= 0:
                     continue
                 if code in ("0098", "2026"):

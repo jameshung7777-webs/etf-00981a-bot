@@ -10,7 +10,7 @@ pip install -r requirements.txt -q 2>nul
 echo.
 echo 選擇執行模式:
 echo 1. 立即執行一次
-echo 2. 啟動排程器（每天18:00抓取、18:30發送）
+echo 2. 啟動排程器（每天 16:30 抓取、17:00 發送；須保持此視窗開啟）
 echo.
 set /p choice=請選擇 (1 或 2，直接按 Enter 預設為排程器): 
 
@@ -20,7 +20,7 @@ if "%choice%"=="1" (
     python main.py --now
 ) else (
     echo.
-    echo 啟動排程器（每天18:00抓取、18:30發送）...
+    echo 啟動排程器（每天 16:30 抓取、17:00 發送）...
     echo 按 Ctrl+C 可停止程式
     python main.py
 )

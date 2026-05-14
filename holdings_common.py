@@ -29,20 +29,74 @@ def _is_garbage_code(code):
     return code in ('0098', '2026')
 
 def normalize_equity_lots_from_api_value(shares_val):
-    """將 API／表格／JSON 的持股數統一為「張」。
+    """向下相容：未帶單位資訊時用啟發式（舊程式名稱保留）。"""
+    return normalize_equity_lots_raw(shares_val, "auto")
 
-    - 大於等於 10 萬：視為股數，一律除以 1000（含貿聯 4,703,848 股等非整千股）。
-    - 1 萬～10 萬且為千股整除：亦視為股數（小型成分）。
-    - 其餘視為已是張數。
+
+def shares_column_header_kind(header_label):
+    """依持股數量欄表頭判斷數字是「股」還是「張」：'share' | 'lot' | 'auto'。"""
+    s = (header_label or "").replace(" ", "").strip()
+    if not s:
+        return "auto"
+    if "張數" in s or "千張" in s or "持有張" in s:
+        return "lot"
+    if "股數" in s or "持有股數" in s or s == "股數":
+        return "share"
+    if "張" in s and "股數" not in s:
+        return "lot"
+    if "股" in s and "張" not in s and "權" not in s:
+        return "share"
+    return "auto"
+
+
+def refine_quantity_kind(header_kind, holding_cell, unit_cell):
+    """用儲存格／單位欄覆寫表頭判斷（股、張優先看明寫的單位）。"""
+    t = f"{holding_cell or ''} {unit_cell or ''}"
+    if re.search(r"[\d,，]+\s*[張张]", t):
+        return "lot"
+    if re.search(r"[\d,，]+\s*股", t):
+        return "share"
+    uc = unit_cell or ""
+    if uc and ("張" in uc or "张" in uc) and "股" not in uc:
+        return "lot"
+    if uc and "股" in uc and "張" not in uc and "张" not in uc:
+        return "share"
+    return header_kind if header_kind in ("share", "lot") else "auto"
+
+
+def json_row_quantity_kind(item):
+    """從 JSON 物件的 unit 等欄位推斷持股數單位。"""
+    if not isinstance(item, dict):
+        return "auto"
+    u = str(item.get("unit") or item.get("shareUnit") or item.get("qtyUnit") or item.get("quantityUnit") or "")
+    if any(x in u for x in ("張", "张", "lot", "LOT")):
+        return "lot"
+    if any(x in u for x in ("股", "Share", "share", "SHARE")):
+        return "share"
+    return "auto"
+
+
+def normalize_equity_lots_raw(raw_val, quantity_kind="auto"):
+    """依明確單位把數字轉成「張」。
+
+    quantity_kind:
+      - 'share': 輸入為股，整數除 1000（台股 1 張 = 1000 股）向下取整。
+      - 'lot': 輸入已是張，不除。
+      - 'auto': 無表頭／單位時的保守推測（大數多為股）。
     """
-    if shares_val is None:
+    if raw_val is None:
         return 0
     try:
-        v = int(float(shares_val))
+        v = int(float(raw_val))
     except (TypeError, ValueError):
         return 0
     if v <= 0:
         return 0
+    if quantity_kind == "lot":
+        return v
+    if quantity_kind == "share":
+        return v // 1000
+    # --- auto ---
     if v >= 100_000:
         return v // 1000
     if v >= 10_000 and v % 1000 == 0:
