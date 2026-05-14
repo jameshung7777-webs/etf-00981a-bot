@@ -21,6 +21,7 @@ from holdings_common import (
     _is_garbage_name,
     _parse_percent,
     _resolve_weight_pct,
+    dedupe_holdings_by_code,
     extract_holdings_list_from_embedded_json,
     json_row_quantity_kind,
     normalize_equity_lots_raw,
@@ -167,18 +168,23 @@ def fetch_holdings_selenium():
                             if isinstance(item, dict):
                                 code = str(item.get('code', item.get('stockCode', item.get('symbol', '')))).strip()
                                 name = str(item.get('name', item.get('stockName', item.get('stock_name', '')))).strip()
+                                try:
+                                    raw_s = int(
+                                        item.get("shares", item.get("quantity", item.get("amount", 0))) or 0
+                                    )
+                                except (ValueError, TypeError):
+                                    continue
                                 shares = normalize_equity_lots_raw(raw_s, json_row_quantity_kind(item))
 
                                 if len(code) == 4 and code.isdigit() and shares > 0:
-                                    holdings.append(
-                                        {
-                                            "code": code,
-                                            "name": name,
-                                            "shares": shares,
-                                        }
-                                    )
+                                    row = {"code": code, "name": name, "shares": shares}
+                                    w = _resolve_weight_pct(item)
+                                    if w is not None:
+                                        row["weight_pct"] = w
+                                    holdings.append(row)
                         
                         if holdings:
+                            holdings = dedupe_holdings_by_code(holdings)
                             print(f"[OK] 從 API 成功獲取 {len(holdings)} 筆數據: {api_url}")
                             return (holdings, None)
                 except json.JSONDecodeError as e:
@@ -417,8 +423,9 @@ def fetch_holdings_selenium():
                 if w is not None:
                     item['weight_pct'] = w
                 result.append(item)
-            
+
             if result:
+                result = dedupe_holdings_by_code(result)
                 print(f"[OK] 成功解析 {len(result)} 檔股票")
                 return (result, page_date)
             else:

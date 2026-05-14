@@ -127,6 +127,38 @@ def _resolve_weight_pct(item):
     return None
 
 
+def dedupe_holdings_by_code(rows):
+    """同股票代碼若出現多列（表尾誤列、重複列），保留權重較高者；皆無權重則取張數較大者。"""
+    if not rows:
+        return rows
+    best = {}
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        code = str(r.get("code") or "").strip()
+        if len(code) != 4 or not code.isdigit():
+            continue
+        w = _resolve_weight_pct(r)
+        sh = int(r.get("shares") or 0) or 0
+        prev = best.get(code)
+        if prev is None:
+            best[code] = r
+            continue
+        pw = _resolve_weight_pct(prev)
+        psh = int(prev.get("shares") or 0) or 0
+        if w is not None and pw is None:
+            best[code] = r
+        elif pw is not None and w is None:
+            pass
+        elif w is not None and pw is not None:
+            if w > pw or (w == pw and sh > psh):
+                best[code] = r
+        else:
+            if sh > psh:
+                best[code] = r
+    return list(best.values())
+
+
 def parse_disclosure_date_from_html(text):
     """從口袋證券持股頁等 HTML 擷取「資料日期」「更新時間」或內嵌 JSON 的 date，取日曆上**最新**一筆（YYYY/M/D）。
 

@@ -13,6 +13,7 @@ from holdings_common import (
     _is_garbage_name,
     _parse_percent,
     _resolve_weight_pct,
+    dedupe_holdings_by_code,
     extract_holdings_list_from_embedded_json,
     json_row_quantity_kind,
     normalize_equity_lots_raw,
@@ -187,7 +188,7 @@ def fetch_holdings_requests():
                     if 0 < shares_ < 10000000:
                         holdings.append({"code": code_, "name": name_, "shares": shares_})
             if holdings:
-                holdings = list({h["code"]: h for h in holdings}.values())
+                holdings = dedupe_holdings_by_code(holdings)
 
         if holdings:
             result = []
@@ -214,6 +215,7 @@ def fetch_holdings_requests():
                     item["weight_pct"] = w
                 result.append(item)
             if result:
+                result = dedupe_holdings_by_code(result)
                 print(f"[OK] 成功解析 {len(result)} 檔股票")
                 return (result, page_date)
 
