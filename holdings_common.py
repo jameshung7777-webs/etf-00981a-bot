@@ -491,6 +491,23 @@ def _shares_int(val):
         return 0
 
 
+def _lots_to_share_count(lots):
+    """持股 JSON 的 shares 為「張」時換算成股數（台股 1 張＝1,000 股）。"""
+    return _shares_int(lots) * 1000
+
+
+def _report_date_heading(date_str):
+    """2026/5/13 → 5/13（表頭用）。"""
+    s = (date_str or "").strip().replace("-", "/")
+    parts = [p for p in s.split("/") if p]
+    if len(parts) >= 3:
+        try:
+            return f"{int(parts[1])}/{int(parts[2])}"
+        except (ValueError, TypeError):
+            pass
+    return date_str or "—"
+
+
 def compare_holdings(current, previous):
     """比較持股變化"""
     if not previous or 'holdings' not in previous:
@@ -586,47 +603,76 @@ def format_today_holdings(holdings, date_str, send_date_str=None):
     return "\n".join(lines)
 
 def format_report(changes, prev_date, curr_date):
-    """格式化「與前日比較」報告（供 Telegram 第二則）；只顯示乾淨項目"""
+    """格式化「與前日比較」報告（供 Telegram 第二則）：以**股數**為單位，表格式列出差異與判斷。
+
+    JSON 內 `shares` 為「張」時自動 ×1,000 換算為股數（與口袋／集保常見揭露一致）。
+    """
     def _ok(h):
-        n = (h.get('name') or '')
-        return n and not _is_garbage_name(n) and not _is_garbage_code(str(h.get('code', '')))
-    added_clean = [h for h in changes['added'] if _ok(h)]
-    removed_clean = [h for h in changes['removed'] if _ok(h)]
-    
-    report = f"00981A 持股更新（{prev_date} → {curr_date}）\n\n"
-    
-    report += "🆕 新增／刪除\n"
-    if added_clean:
-        added_list = [f"・{h['name']}（{h['code']}）：{h['shares']:,} 張" for h in added_clean]
-        report += "・新增：\n" + "\n".join(added_list) + "。\n"
-    else:
-        report += "・新增：無。\n"
-    
-    if removed_clean:
-        removed_list = [f"・{h['name']}（{h['code']}）：{h['shares']:,} 張" for h in removed_clean]
-        report += "・刪除：\n" + "\n".join(removed_list) + "。\n"
-    else:
-        report += "・刪除：無。\n"
-    
-    increased_clean = [x for x in changes['increased'] if _ok(x)]
-    decreased_clean = [x for x in changes['decreased'] if _ok(x)]
-    report += "\n📈 主要加碼一覽（張數增加）\n"
-    if increased_clean:
-        for item in increased_clean:
-            report += f"・{item['name']}（{item['code']}）：＋{item['diff']:,} 張（{item['prev']:,} → {item['curr']:,} 張）。\n"
-    else:
-        report += "・無。\n"
-    
-    report += "\n📉 主要減碼一覽（張數減少）\n"
-    if decreased_clean:
-        for item in decreased_clean:
-            report += f"・{item['name']}（{item['code']}）：－{item['diff']:,} 張（{item['prev']:,} → {item['curr']:,} 張）。\n"
-    else:
-        report += "・無。\n"
-    
-    report += "\n＊以上為「張數」變動整理（1 張＝1,000 股），僅為持股結構異動說明，未涉及股價或投資建議。"
-    
-    return report
+        n = (h.get("name") or "")
+        return n and not _is_garbage_name(n) and not _is_garbage_code(str(h.get("code", "")))
+
+    def _fmt_gu(n):
+        return f"{int(n):,}"
+
+    added_clean = [h for h in changes["added"] if _ok(h)]
+    removed_clean = [h for h in changes["removed"] if _ok(h)]
+    increased_clean = [x for x in changes["increased"] if _ok(x)]
+    decreased_clean = [x for x in changes["decreased"] if _ok(x)]
+
+    d_prev = _report_date_heading(prev_date)
+    d_curr = _report_date_heading(curr_date)
+
+    lines = [
+        f"00981A 股數異動（{d_prev} → {d_curr}）",
+        "",
+        f"代號\t名稱\t{d_prev} 股數\t{d_curr} 股數\t差異\t判斷",
+    ]
+
+    # 新增：前日 0 → 當日股數（依當日股數由大到小）
+    added_sorted = sorted(
+        added_clean,
+        key=lambda h: _lots_to_share_count(h.get("shares")),
+        reverse=True,
+    )
+    for h in added_sorted:
+        g = _lots_to_share_count(h.get("shares"))
+        lines.append(f"{h['code']}\t{h['name']}\t{_fmt_gu(0)}\t{_fmt_gu(g)}\t+{_fmt_gu(g)}\t新增")
+
+    # 加碼
+    increased_sorted = sorted(increased_clean, key=lambda x: x["diff"], reverse=True)
+    for item in increased_sorted:
+        pg = _lots_to_share_count(item["prev"])
+        cg = _lots_to_share_count(item["curr"])
+        dg = cg - pg
+        lines.append(
+            f"{item['code']}\t{item['name']}\t{_fmt_gu(pg)}\t{_fmt_gu(cg)}\t+{_fmt_gu(dg)}\t加碼"
+        )
+
+    # 減碼（依減少股數絕對值由大到小）
+    decreased_sorted = sorted(decreased_clean, key=lambda x: x["diff"], reverse=True)
+    for item in decreased_sorted:
+        pg = _lots_to_share_count(item["prev"])
+        cg = _lots_to_share_count(item["curr"])
+        dg = pg - cg
+        lines.append(
+            f"{item['code']}\t{item['name']}\t{_fmt_gu(pg)}\t{_fmt_gu(cg)}\t-{_fmt_gu(dg)}\t減碼"
+        )
+
+    # 刪除：前日有、當日無
+    removed_sorted = sorted(
+        removed_clean,
+        key=lambda h: _lots_to_share_count(h.get("shares")),
+        reverse=True,
+    )
+    for h in removed_sorted:
+        g = _lots_to_share_count(h.get("shares"))
+        lines.append(f"{h['code']}\t{h['name']}\t{_fmt_gu(g)}\t{_fmt_gu(0)}\t-{_fmt_gu(g)}\t刪除")
+
+    lines.append("")
+    lines.append(
+        "＊單位為股；張數來源 ×1,000 換算。僅為持股結構異動說明，未涉及股價或投資建議。"
+    )
+    return "\n".join(lines)
 
 # Telegram 單則訊息上限 4096 字元，分段時用 4000 保留餘裕
 TELEGRAM_MAX_MESSAGE_LENGTH = 4000
