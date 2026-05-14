@@ -305,7 +305,8 @@ def load_previous_holdings(data_file=None, current_date_str=None):
     `HOLDINGS_PREVIOUS_SNAPSHOT=last`。
 
     檔名日期僅在無法用 JSON date 篩選時當 fallback。
-    current_date_str：今日持股的 date（與 holdings_data.json 一致）；若省略則用台灣日期。
+    候選基準檔僅 `holdings_data_*.json`，不含 `holdings_data.json`（發送流程中該檔即「當前」來源，併入會造成與自己比對）。
+    current_date_str：選檔錨點日（通常與 holdings_data.json 的 date 或台灣曆一致）；若省略則用台灣日期。
     data_file：若指定路徑則只讀該檔（不做日期篩選）。"""
     import glob
 
@@ -387,9 +388,7 @@ def load_previous_holdings(data_file=None, current_date_str=None):
         return out
 
     paths = glob.glob(os.path.join(base_dir, "holdings_data_*.json"))
-    hj = os.path.join(base_dir, "holdings_data.json")
-    if os.path.isfile(hj):
-        paths.append(hj)
+    # 不比對 holdings_data.json：當前持股由該檔讀入；若其 JSON date 仍為昨日，曾被誤列入候選而變成「與自己比」。
 
     candidates = []
     for path in paths:

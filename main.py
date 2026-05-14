@@ -281,13 +281,14 @@ def send_messages_only():
             report_compare = format_report(changes, prev_plain.get("date", ""), today_str)
         else:
             report_compare = (
-                f"00981A 張數異動（{yesterday_str} → {file_date_str}）\n\n（無法產生變化比較）\n\n" + msg_today
+                f"00981A 張數異動（{prev_plain.get('date', '')} → {today_str}）\n\n（無法產生變化比較）\n\n" + msg_today
             )
     else:
         if not previous_data:
             print("[i] 無歷史快照可比較（請確認 repo 內有 holdings_data_*.json，且 JSON 業務日早於今日，或同日至少兩筆時間檔以最早檔為基準）。")
+        prev_d = (previous_data or {}).get("date") or "?"
         report_compare = (
-            f"00981A 張數異動（{yesterday_str} → {file_date_str}）\n\n（無前日資料可比較）\n\n" + msg_today
+            f"00981A 張數異動（{prev_d} → {today_str}）\n\n（無前日資料可比較）\n\n" + msg_today
         )
 
     _warn_len = 3500  # Telegram 單則約 4096，提前於日誌警示
