@@ -289,8 +289,11 @@ def extract_holdings_list_from_embedded_json(text):
 def load_previous_holdings(data_file=None, current_date_str=None):
     """載入「上一筆」持股快照做比較：只依 JSON 內 `date`（業務日），嚴格早於今日且該欄位最大者。
 
-    同一業務日若因重複抓取有多個檔，**不**取檔名／時間最晚的那一檔，改取**最早一檔**（檔名 HHMM 最小，無則 mtime 最早），
-    避免「一天抓兩次」時誤用第二次快照當基準。檔名日期僅在無法用 JSON date 篩選時當 fallback。
+    同一業務日若因重複抓取有多個檔，預設取**檔名時間最早**一檔（HHMM 最小），避免晚間誤抓、
+    與隔日重疊的數字被當成「昨日基準」。若你希望改取**最晚**一檔，請設環境變數
+    `HOLDINGS_PREVIOUS_SNAPSHOT=last`。
+
+    檔名日期僅在無法用 JSON date 篩選時當 fallback。
     current_date_str：今日持股的 date（與 holdings_data.json 一致）；若省略則用台灣日期。
     data_file：若指定路徑則只讀該檔（不做日期篩選）。"""
     import glob
@@ -352,7 +355,7 @@ def load_previous_holdings(data_file=None, current_date_str=None):
         return datetime(y, mo, d).date(), hhmm
 
     def _path_fetch_order_key(path):
-        """同日多檔時用來排序：數字越大＝檔名時間越晚；與 min() 併用＝取當日第一次抓取。"""
+        """同日多檔時用來排序：數字越大＝檔名時間越晚；與 min/max 併用。"""
         m = _fn_re.search(os.path.basename(path))
         if m:
             return (0, int(m.group(4)))
@@ -365,7 +368,8 @@ def load_previous_holdings(data_file=None, current_date_str=None):
         out = _clean_payload(raw)
         if not out:
             return None
-        print(f"[i] 持股變化比較基準：{os.path.basename(chosen_path)}（{raw.get('date')}）")
+        disp = os.path.basename(chosen_path) if os.path.isfile(str(chosen_path)) else str(chosen_path)
+        print(f"[i] 持股變化比較基準：{disp}（{raw.get('date')}）")
         if force_same_day:
             out = dict(out)
             out["_force_compare_with_today"] = True
@@ -393,7 +397,11 @@ def load_previous_holdings(data_file=None, current_date_str=None):
     if candidates:
         max_d = max(c[0] for c in candidates)
         same_day = [c for c in candidates if c[0] == max_d]
-        _, chosen_path, raw = min(same_day, key=lambda c: _path_fetch_order_key(c[1]))
+        pick = (os.getenv("HOLDINGS_PREVIOUS_SNAPSHOT") or "first").strip().lower()
+        if pick in ("last", "latest", "max"):
+            _, chosen_path, raw = max(same_day, key=lambda c: _path_fetch_order_key(c[1]))
+        else:
+            _, chosen_path, raw = min(same_day, key=lambda c: _path_fetch_order_key(c[1]))
         try:
             return _finalize(raw, chosen_path, False)
         except Exception as e:
@@ -414,11 +422,16 @@ def load_previous_holdings(data_file=None, current_date_str=None):
     if fd_prev:
         max_fd = max(x[0] for x in fd_prev)
         pool = [x for x in fd_prev if x[0] == max_fd]
-        _, _, path = min(pool, key=lambda x: x[1])
+        pick = (os.getenv("HOLDINGS_PREVIOUS_SNAPSHOT") or "first").strip().lower()
+        if pick in ("last", "latest", "max"):
+            _, _, path = max(pool, key=lambda x: x[1])
+        else:
+            _, _, path = min(pool, key=lambda x: x[1])
         try:
             with open(path, encoding="utf-8") as f:
                 raw = json.load(f)
-            print("[i] 提示：以檔名日期選出基準（JSON 內 date 未早於今日之可用檔）；同日多檔取最早 HHMM")
+            print("[i] 提示：以檔名日期選出基準（JSON 內 date 未早於今日之可用檔）；同日多檔取 "
+                  + ("最晚" if pick in ("last", "latest", "max") else "最早") + " HHMM")
             return _finalize(raw, path, False)
         except Exception as e:
             print(f"載入歷史數據時發生錯誤: {e}")
