@@ -607,10 +607,61 @@ def format_today_holdings(holdings, date_str, send_date_str=None):
         lines.append("＊此頁未提供權重時，以持有張數占比作估算，非真正市值，僅供參考。")
     return "\n".join(lines)
 
-def format_report(changes, prev_date, curr_date):
+def _format_top10_weight_block(current_holdings, previous_holdings, prev_date, curr_date):
+    """依「當日權重」由高取前十大，列前一日與當日權重及差；無足夠權重欄位時回傳空字串。"""
+    if not isinstance(current_holdings, list) or not isinstance(previous_holdings, list):
+        return ""
+
+    def _row_ok(h):
+        if not isinstance(h, dict) or not h.get("code"):
+            return False
+        n = (h.get("name") or "")
+        return bool(n) and not _is_garbage_name(n) and not _is_garbage_code(str(h.get("code", "")))
+
+    prev_map = {str(h["code"]): h for h in previous_holdings if _row_ok(h)}
+    if not any(_resolve_weight_pct(h) is not None for h in prev_map.values()):
+        return ""
+
+    curr_rows = [h for h in current_holdings if _row_ok(h)]
+
+    scored = []
+    for h in curr_rows:
+        w = _resolve_weight_pct(h)
+        if w is not None:
+            scored.append((h, float(w)))
+    if not scored:
+        return ""
+
+    scored.sort(key=lambda x: -x[1])
+    top = scored[:10]
+
+    dp = _report_date_heading(prev_date)
+    dc = _report_date_heading(curr_date)
+    lines = [
+        f"前 10 大權重變化：{dp} → {dc}",
+        "",
+        f"代號\t名稱\t{dp} 權重\t{dc} 權重\t變化",
+    ]
+    for h, wc in top:
+        code = str(h["code"])
+        name = h.get("name") or ""
+        ph = prev_map.get(code)
+        pw = _resolve_weight_pct(ph) if ph else None
+        if pw is None:
+            lines.append(f"{code}\t{name}\t—\t{wc:.2f}%\t新進")
+        else:
+            dw = wc - float(pw)
+            lines.append(f"{code}\t{name}\t{pw:.2f}%\t{wc:.2f}%\t{dw:+.2f}%")
+    lines.append("")
+    lines.append("＊權重為網站揭露之成分比重（%），與上表張數異動分開陳列，僅供參考。")
+    return "\n".join(lines)
+
+
+def format_report(changes, prev_date, curr_date, current_holdings=None, previous_holdings=None):
     """格式化「與前日比較」報告（供 Telegram 第二則）：以**張**為單位，表格式列出差異與判斷。
 
     JSON 內 `shares` 為「張」；差異與兩日欄位皆為張數。
+    若傳入 `current_holdings` / `previous_holdings`（持股 list）且兩日皆具權重欄位，會在文末附加「前 10 大權重變化」表。
     """
     def _ok(h):
         n = (h.get("name") or "")
@@ -671,7 +722,12 @@ def format_report(changes, prev_date, curr_date):
 
     lines.append("")
     lines.append("＊單位為張（1 張＝1,000 股）。僅為持股結構異動說明，未涉及股價或投資建議。")
-    return "\n".join(lines)
+    body = "\n".join(lines)
+    if current_holdings is not None and previous_holdings is not None:
+        wblk = _format_top10_weight_block(current_holdings, previous_holdings, prev_date, curr_date)
+        if wblk:
+            body = body + "\n\n" + wblk
+    return body
 
 # Telegram 單則訊息上限 4096 字元，分段時用 4000 保留餘裕
 TELEGRAM_MAX_MESSAGE_LENGTH = 4000

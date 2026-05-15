@@ -278,7 +278,13 @@ def send_messages_only():
         prev_plain = {k: v for k, v in previous_data.items() if not str(k).startswith("_")}
         changes = compare_fn(current_holdings, prev_plain)
         if changes is not None:
-            report_compare = format_report(changes, prev_plain.get("date", ""), today_str)
+            report_compare = format_report(
+                changes,
+                prev_plain.get("date", ""),
+                today_str,
+                current_holdings=current_holdings,
+                previous_holdings=prev_plain.get("holdings"),
+            )
         else:
             report_compare = (
                 f"00981A 張數異動（{prev_plain.get('date', '')} → {today_str}）\n\n（無法產生變化比較）\n\n" + msg_today

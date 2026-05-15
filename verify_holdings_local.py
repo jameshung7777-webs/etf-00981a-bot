@@ -53,9 +53,16 @@ def main():
     today_str = f"{tw.year}/{tw.month}/{tw.day}"
     prev = load_previous_holdings(current_date_str=d or today_str)
     if prev:
-        ch = compare_holdings(h, {k: v for k, v in prev.items() if not str(k).startswith("_")})
+        prev_plain = {k: v for k, v in prev.items() if not str(k).startswith("_")}
+        ch = compare_holdings(h, prev_plain)
         if ch:
-            rep = format_report(ch, prev.get("date", ""), d or today_str)
+            rep = format_report(
+                ch,
+                prev.get("date", ""),
+                d or today_str,
+                current_holdings=h,
+                previous_holdings=prev_plain.get("holdings"),
+            )
             print("\n--- 變化摘要（前 800 字）---\n")
             print(rep[:800])
     else:

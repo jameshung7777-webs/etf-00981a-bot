@@ -474,7 +474,13 @@ def main():
         print(f"[OK] 載入 {previous_data['date']} 的歷史數據")
         changes = compare_holdings(current_holdings, previous_data)
         if changes:
-            report = format_report(changes, previous_data['date'], today_str)
+            report = format_report(
+                changes,
+                previous_data["date"],
+                today_str,
+                current_holdings=current_holdings,
+                previous_holdings=previous_data.get("holdings"),
+            )
             print("\n" + "=" * 50)
             print(report)
             print("=" * 50 + "\n")
