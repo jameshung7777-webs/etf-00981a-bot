@@ -1,5 +1,5 @@
 # 00981A：抓取 → 提交 holdings JSON → 發送 Telegram（單一 workflow）
-# 排程：台灣 16:30（UTC 08:30）一次跑完。
+# 排程：台灣 14:30（UTC 06:30）一次跑完（較原 16:30 提早 2 小時，預留 GitHub 排程排隊延遲）。
 #
 # 若「沒有自動跑」請檢查：
 # - GitHub 只會用「預設分支」（通常是 main）上的此檔跑 schedule；請確認已 merge 且預設分支正確。
@@ -10,7 +10,7 @@ name: 00981A ETF 每日流程
 
 on:
   schedule:
-    - cron: '30 8 * * *'
+    - cron: '30 6 * * *'
   workflow_dispatch:
     inputs:
       mode:
