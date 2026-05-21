@@ -10,7 +10,7 @@ name: 00981A ETF 每日流程
 
 on:
   schedule:
-    - cron: '30 6 * * *'
+    - cron: '30 5 * * *'
   workflow_dispatch:
     inputs:
       mode:
