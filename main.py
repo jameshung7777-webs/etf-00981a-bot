@@ -177,9 +177,20 @@ def fetch_data_only():
             t = threading.Thread(target=_run, daemon=True)
             t.start()
             t.join(timeout=SELENIUM_TIMEOUT)
+            if not _r[0] and t.is_alive():
+                print(f"[!] Selenium 逾時（{SELENIUM_TIMEOUT}s），可設環境變數 SELENIUM_FETCH_TIMEOUT 加大")
             current_holdings, disclosure_date_str = _r[0]
         except Exception as e:
             print(f"Selenium 失敗: {e}")
+
+    if current_holdings:
+        from holdings_common import validate_fetched_holdings
+
+        ok_val, vmsg = validate_fetched_holdings(current_holdings)
+        print(f"[i] 抓取合理性: {vmsg}")
+        if not ok_val:
+            print("[FAIL] 持股數據未通過合理性檢查，不寫入 JSON")
+            current_holdings = None
 
     if not current_holdings:
         print("[FAIL] 無法抓取持股數據")

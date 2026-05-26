@@ -68,12 +68,137 @@ def json_row_quantity_kind(item):
     """從 JSON 物件的 unit 等欄位推斷持股數單位。"""
     if not isinstance(item, dict):
         return "auto"
+    qk = item.get("_quantity_kind") or item.get("quantity_kind")
+    if qk in ("share", "lot", "auto"):
+        return qk
     u = str(item.get("unit") or item.get("shareUnit") or item.get("qtyUnit") or item.get("quantityUnit") or "")
     if any(x in u for x in ("張", "张", "lot", "LOT")):
         return "lot"
     if any(x in u for x in ("股", "Share", "share", "SHARE")):
         return "share"
     return "auto"
+
+
+def _normalize_header_cell(s):
+    return (s or "").strip().lower().replace(" ", "")
+
+
+def table_column_indices(header_cells):
+    """依表頭對應欄位索引。張數欄優先明確關鍵字，避免「持有」誤配；權重勿單用 % 匹配。"""
+    hs = [_normalize_header_cell(c) for c in header_cells]
+
+    def find_idx(keywords):
+        for i, h in enumerate(hs):
+            if any(kw in h for kw in keywords):
+                return i
+        return None
+
+    idx_code = find_idx(("代號", "股票代號", "code"))
+    idx_name = find_idx(("名稱", "股名", "股票名稱", "name"))
+    idx_weight = find_idx(("權重", "比重", "占比", "比例", "weight"))
+    idx_shares = find_idx(("持有張數", "張數", "千張", "持有股數", "股數", "持有", "數量"))
+    idx_unit = find_idx(("單位", "unit"))
+    if idx_code is None:
+        idx_code = 0
+    if idx_name is None:
+        idx_name = 1
+    if idx_weight is None:
+        idx_weight = 2
+    if idx_shares is None:
+        idx_shares = 3
+    if idx_unit is None:
+        idx_unit = 4 if len(hs) > 4 else None
+    if len({idx_code, idx_name, idx_weight, idx_shares}) < 4:
+        idx_code, idx_name, idx_weight, idx_shares = 0, 1, 2, 3
+        idx_unit = 4 if len(hs) > 4 else None
+    return idx_code, idx_name, idx_weight, idx_shares, idx_unit
+
+
+def holding_cell_looks_like_weight(text):
+    """持股數欄若像權重百分比（5.28、9.86%），不可當張數/股數解析。"""
+    s = (text or "").strip()
+    if not s or "%" in s:
+        return True
+    if re.match(r"^\d{1,2}\.\d{1,4}$", s.replace(",", "")):
+        return True
+    return False
+
+
+def standardize_holdings_rows(rows):
+    """統一清洗、股張換算、去重；DOM/API/內嵌 JSON 最後都應走此函式。"""
+    if not rows:
+        return []
+    result = []
+    for item_src in rows:
+        if not isinstance(item_src, dict):
+            continue
+        code = str(item_src.get("code", item_src.get("stockCode", item_src.get("symbol", "")))).strip()
+        name = str(item_src.get("name", item_src.get("stockName", item_src.get("stock_name", "")))).strip()
+        try:
+            raw_s = int(item_src.get("shares", item_src.get("quantity", item_src.get("amount", 0))) or 0)
+        except (ValueError, TypeError):
+            continue
+        kind = json_row_quantity_kind(item_src)
+        shares = normalize_equity_lots_raw(raw_s, kind)
+        if len(code) != 4 or not code.isdigit() or shares <= 0:
+            continue
+        if _is_garbage_code(code) or _is_garbage_name(name):
+            continue
+        item = {"code": code, "name": name, "shares": shares, "unit": "張"}
+        w = _resolve_weight_pct(item_src)
+        if w is not None:
+            item["weight_pct"] = w
+        result.append(item)
+    return dedupe_holdings_by_code(result)
+
+
+def validate_fetched_holdings(holdings):
+    """抓取後合理性檢查；失敗應視為抓取無效、勿寫入 JSON。
+
+    回傳 (ok: bool, message: str)
+    """
+    if not holdings:
+        return False, "無持股資料"
+    n = len(holdings)
+    if n < 35:
+        return False, f"筆數過少（{n}，00981A 正常約 50 檔上下）"
+
+    by = {str(h.get("code")): h for h in holdings if h.get("code")}
+    ts = by.get("2330")
+    if not ts:
+        return False, "缺少台積電 2330"
+
+    sh2330 = int(ts.get("shares") or 0)
+    wt2330 = _resolve_weight_pct(ts) or 0.0
+    if not (3000 <= sh2330 <= 25000):
+        return False, f"2330 張數異常: {sh2330}（常見股/張混用或欄位抓錯）"
+    if wt2330 and not (4.5 <= wt2330 <= 14.5):
+        return False, f"2330 權重異常: {wt2330}%"
+
+    for h in holdings:
+        code = str(h.get("code", ""))
+        s = int(h.get("shares") or 0)
+        w = _resolve_weight_pct(h) or 0.0
+        if s > 35000 and 0 < w < 4.0:
+            return False, f"{code} 張數 {s} 與權重 {w:.2f}% 矛盾（疑為股數未換算或抓錯欄）"
+
+    suspicious = []
+    for h in holdings:
+        code = str(h.get("code", ""))
+        s = int(h.get("shares") or 0)
+        w = _resolve_weight_pct(h) or 0.0
+        if w >= 2.0 and s <= 10:
+            suspicious.append(f"{code}(wt{w:.1f}%→{s}張)")
+        if s >= 50000 and 0 < w < 4.0:
+            suspicious.append(f"{code}(wt{w:.1f}%→{s}張)")
+    if len(suspicious) >= 4:
+        return False, "異常列過多: " + "、".join(suspicious[:8])
+
+    ones = sum(1 for h in holdings if int(h.get("shares") or 0) == 1)
+    if ones >= 6:
+        return False, f"疑似股/張混用：{ones} 檔張數=1"
+
+    return True, f"OK {n} 檔；2330 {sh2330} 張 / {wt2330:.2f}%"
 
 
 def normalize_equity_lots_raw(raw_val, quantity_kind="auto"):

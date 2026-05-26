@@ -90,6 +90,8 @@ jobs:
         env:
           CHROME_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
           CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
+          # pocket.tw 在 CI 常因憑證鏈導致 requests SSL 失敗；允許 requests 路徑重試
+          ETF_REQUESTS_VERIFY_SSL: "0"
         run: |
           echo "▶ python main.py --fetch-only"
           python main.py --fetch-only

@@ -10,17 +10,18 @@ from bs4 import BeautifulSoup
 import re
 
 from holdings_common import (
-    _is_garbage_code,
     _is_garbage_name,
     _parse_percent,
-    _resolve_weight_pct,
     dedupe_holdings_by_code,
     extract_holdings_list_from_embedded_json,
-    json_row_quantity_kind,
+    holding_cell_looks_like_weight,
     normalize_equity_lots_raw,
     parse_disclosure_date_from_html,
     refine_quantity_kind,
     shares_column_header_kind,
+    standardize_holdings_rows,
+    table_column_indices,
+    validate_fetched_holdings,
     load_previous_holdings,
     save_holdings,
     compare_holdings,
@@ -28,42 +29,6 @@ from holdings_common import (
     format_today_holdings,
     send_to_telegram,
 )
-
-
-def _normalize_header_cell(s):
-    return (s or "").strip().lower().replace(" ", "")
-
-
-def _table_column_indices(header_cells):
-    """依表頭中文對應欄位索引；找不到時維持 代號|名稱|權重|持有數|單位 順序。"""
-    hs = [_normalize_header_cell(c) for c in header_cells]
-    def find_idx(keywords):
-        for i, h in enumerate(hs):
-            if any(kw in h for kw in keywords):
-                return i
-        return None
-
-    idx_code = find_idx(("代號", "股票代號", "code"))
-    idx_name = find_idx(("名稱", "股名", "股票名稱", "name"))
-    idx_weight = find_idx(("權重", "比重", "占比", "比例", "%"))
-    idx_shares = find_idx(("持有", "持有股數", "張數", "股數", "數量"))
-    idx_unit = find_idx(("單位", "unit"))
-    defaults = (0, 1, 2, 3, 4)
-    if idx_code is None:
-        idx_code = 0
-    if idx_name is None:
-        idx_name = 1
-    if idx_weight is None:
-        idx_weight = 2
-    if idx_shares is None:
-        idx_shares = 3
-    if idx_unit is None:
-        idx_unit = 4 if len(hs) > 4 else None
-    # 若表頭顯示「持有」在「權重」左側，仍可依關鍵字對到正確索引
-    if len(set([idx_code, idx_name, idx_weight, idx_shares])) < 4:
-        idx_code, idx_name, idx_weight, idx_shares = defaults[:4]
-        idx_unit = 4 if len(hs) > 4 else None
-    return idx_code, idx_name, idx_weight, idx_shares, idx_unit
 
 
 def fetch_holdings_requests():
@@ -87,7 +52,14 @@ def fetch_holdings_requests():
     
     try:
         print("正在請求網頁...")
-        response = requests.get(fetch_url, headers=headers, timeout=30, verify=verify_ssl)
+        try:
+            response = requests.get(fetch_url, headers=headers, timeout=30, verify=verify_ssl)
+        except requests.exceptions.SSLError as ssl_err:
+            if verify_ssl:
+                print(f"  SSL 驗證失敗，改以 verify=False 重試一次（可設 ETF_REQUESTS_VERIFY_SSL=0 略過）: {ssl_err}")
+                response = requests.get(fetch_url, headers=headers, timeout=30, verify=False)
+            else:
+                raise
         response.raise_for_status()
         print(f"  網頁回應狀態碼: {response.status_code}")
         html = response.text
@@ -124,7 +96,7 @@ def fetch_holdings_requests():
                     continue
 
                 print(f"  解析表格 #{table_idx + 1}，有 {len(rows)} 行（確認是持股明細表格）")
-                ic, ina, iw, ish, iu = _table_column_indices(header_cells_raw)
+                ic, ina, iw, ish, iu = table_column_indices(header_cells_raw)
                 hdr_kind = shares_column_header_kind(
                     header_cells_raw[ish] if ish < len(header_cells_raw) else ""
                 )
@@ -150,6 +122,9 @@ def fetch_holdings_requests():
                     if code_text.upper() in ["CASH", "MARGIN", "PFUR", "RDI"] or "現金" in name_text or "保證金" in name_text:
                         continue
 
+                    if holding_cell_looks_like_weight(holding_text):
+                        continue
+
                     digits = re.sub(r"[^\d]", "", holding_text or "")
                     if not digits:
                         continue
@@ -162,7 +137,13 @@ def fetch_holdings_requests():
                     shares = normalize_equity_lots_raw(shares_raw, qk)
 
                     if shares > 0 and len(code) == 4 and code.isdigit() and not _is_garbage_name(name_text):
-                        item = {"code": code, "name": name_text, "shares": shares, "unit": "張"}
+                        item = {
+                            "code": code,
+                            "name": name_text,
+                            "shares": shares,
+                            "unit": "張",
+                            "_quantity_kind": qk,
+                        }
                         w = _parse_percent(weight_text)
                         if w is not None:
                             item["weight_pct"] = w
@@ -195,31 +176,13 @@ def fetch_holdings_requests():
                 holdings = dedupe_holdings_by_code(holdings)
 
         if holdings:
-            result = []
-            for item_src in holdings:
-                if not isinstance(item_src, dict):
-                    continue
-                code = str(item_src.get("code", item_src.get("stockCode", ""))).strip()
-                name = str(item_src.get("name", item_src.get("stockName", ""))).strip()
-                try:
-                    shares_raw = int(item_src.get("shares", item_src.get("quantity", 0)) or 0)
-                except (ValueError, TypeError):
-                    continue
-                kind = json_row_quantity_kind(item_src)
-                shares = normalize_equity_lots_raw(shares_raw, kind)
-                if len(code) != 4 or not code.isdigit() or shares <= 0:
-                    continue
-                if code in ("0098", "2026"):
-                    continue
-                if _is_garbage_name(name):
-                    continue
-                item = {"code": code, "name": name, "shares": shares}
-                w = _resolve_weight_pct(item_src)
-                if w is not None:
-                    item["weight_pct"] = w
-                result.append(item)
+            result = standardize_holdings_rows(holdings)
             if result:
-                result = dedupe_holdings_by_code(result)
+                ok, vmsg = validate_fetched_holdings(result)
+                print(f"[i] 抓取合理性: {vmsg}")
+                if not ok:
+                    print("[FAIL] 解析結果未通過合理性檢查，視為抓取失敗")
+                    return (None, page_date)
                 print(f"[OK] 成功解析 {len(result)} 檔股票")
                 return (result, page_date)
 

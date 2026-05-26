@@ -36,7 +36,12 @@ def _check_top(holdings):
 
 def main():
     from scraper_selenium import fetch_holdings_selenium
-    from holdings_common import compare_holdings, format_report, load_previous_holdings
+    from holdings_common import (
+        compare_holdings,
+        format_report,
+        load_previous_holdings,
+        validate_fetched_holdings,
+    )
 
     print("▶ Selenium 抓取中…")
     h, d = fetch_holdings_selenium()
@@ -44,7 +49,7 @@ def main():
     if not h:
         print("FAIL 無資料")
         return 1
-    ok, msg = _check_top(h)
+    ok, msg = validate_fetched_holdings(h)
     print("▶ 檢查:", msg)
     if not ok:
         return 2

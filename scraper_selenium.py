@@ -17,17 +17,19 @@ SELENIUM_DRIVER_TIMEOUT = 60
 
 
 from holdings_common import (
-    _is_garbage_code,
-    _is_garbage_name,
     _parse_percent,
     _resolve_weight_pct,
     dedupe_holdings_by_code,
     extract_holdings_list_from_embedded_json,
+    holding_cell_looks_like_weight,
     json_row_quantity_kind,
     normalize_equity_lots_raw,
     parse_disclosure_date_from_html,
     refine_quantity_kind,
     shares_column_header_kind,
+    standardize_holdings_rows,
+    table_column_indices,
+    validate_fetched_holdings,
     load_previous_holdings,
     save_holdings,
     compare_holdings,
@@ -35,7 +37,6 @@ from holdings_common import (
     format_today_holdings,
     send_to_telegram,
 )
-from scraper_requests import _table_column_indices
 
 def setup_driver():
     """設置 Chrome WebDriver（支援 GitHub Actions 環境）"""
@@ -143,7 +144,14 @@ def fetch_holdings_selenium():
     for api_url in api_urls:
         try:
             print(f"  嘗試 API: {api_url}")
-            response = requests.get(api_url, headers=headers, timeout=15, verify=verify_ssl)
+            try:
+                response = requests.get(api_url, headers=headers, timeout=15, verify=verify_ssl)
+            except requests.exceptions.SSLError:
+                if verify_ssl:
+                    print("  API SSL 失敗，改 verify=False 重試")
+                    response = requests.get(api_url, headers=headers, timeout=15, verify=False)
+                else:
+                    raise
             print(f"  API 回應狀態碼: {response.status_code}")
             
             if response.status_code == 200:
@@ -185,9 +193,13 @@ def fetch_holdings_selenium():
                                     holdings.append(row)
                         
                         if holdings:
-                            holdings = dedupe_holdings_by_code(holdings)
-                            print(f"[OK] 從 API 成功獲取 {len(holdings)} 筆數據: {api_url}")
-                            return (holdings, None)
+                            holdings = standardize_holdings_rows(holdings)
+                            ok, vmsg = validate_fetched_holdings(holdings)
+                            print(f"[i] API 合理性: {vmsg}")
+                            if ok:
+                                print(f"[OK] 從 API 成功獲取 {len(holdings)} 筆數據: {api_url}")
+                                return (holdings, None)
+                            print("[!] API 資料未通過合理性檢查，改走 Selenium 網頁")
                 except json.JSONDecodeError as e:
                     print(f"  JSON 解析失敗: {e}")
                     print(f"  回應內容前 200 字元: {response.text[:200]}")
@@ -298,7 +310,7 @@ def fetch_holdings_selenium():
                     continue
 
                 print(f"  解析表格 #{table_idx + 1}，有 {len(rows)} 行（持股明細）")
-                ic, ina, iw, ish, iu = _table_column_indices(header_cells_raw)
+                ic, ina, iw, ish, iu = table_column_indices(header_cells_raw)
                 hdr_kind = shares_column_header_kind(
                     header_cells_raw[ish] if ish < len(header_cells_raw) else ""
                 )
@@ -326,6 +338,9 @@ def fetch_holdings_selenium():
                         if code_text.upper() in ["CASH", "MARGIN", "PFUR", "RDI"] or "現金" in name_text or "保證金" in name_text:
                             continue
 
+                        if holding_cell_looks_like_weight(holding_text):
+                            continue
+
                         digits = re.sub(r"[^\d]", "", holding_text or "")
                         if not digits:
                             continue
@@ -338,8 +353,13 @@ def fetch_holdings_selenium():
                         shares = normalize_equity_lots_raw(shares_raw, qk)
 
                         if shares > 0 and len(code) == 4 and code.isdigit():
-                            # 已依表頭／單位轉成「張」，最後一輪 normalize 須視為張，勿再當股除 1000
-                            item = {"code": code, "name": name_text, "shares": shares, "unit": "張"}
+                            item = {
+                                "code": code,
+                                "name": name_text,
+                                "shares": shares,
+                                "unit": "張",
+                                "_quantity_kind": qk,
+                            }
                             w = _parse_percent(weight_text)
                             if w is not None:
                                 item["weight_pct"] = w
@@ -403,31 +423,13 @@ def fetch_holdings_selenium():
                 pass
 
         if holdings:
-            # 標準化並過濾垃圾（只保留乾淨持股）
-            result = []
-            for item_src in holdings:
-                if not isinstance(item_src, dict):
-                    continue
-                code = str(item_src.get('code', item_src.get('stockCode', item_src.get('symbol', '')))).strip()
-                name = str(item_src.get('name', item_src.get('stockName', item_src.get('stock_name', '')))).strip()
-                try:
-                    raw_s = int(item_src.get("shares", item_src.get("quantity", item_src.get("amount", 0))) or 0)
-                except (ValueError, TypeError):
-                    continue
-                kind = json_row_quantity_kind(item_src)
-                shares = normalize_equity_lots_raw(raw_s, kind)
-                if len(code) != 4 or not code.isdigit() or shares <= 0:
-                    continue
-                if _is_garbage_code(code) or _is_garbage_name(name):
-                    continue
-                item = {'code': code, 'name': name, 'shares': shares}
-                w = _resolve_weight_pct(item_src)
-                if w is not None:
-                    item['weight_pct'] = w
-                result.append(item)
-
+            result = standardize_holdings_rows(holdings)
             if result:
-                result = dedupe_holdings_by_code(result)
+                ok, vmsg = validate_fetched_holdings(result)
+                print(f"[i] 抓取合理性: {vmsg}")
+                if not ok:
+                    print("[FAIL] 解析結果未通過合理性檢查，視為抓取失敗")
+                    return (None, page_date)
                 print(f"[OK] 成功解析 {len(result)} 檔股票")
                 return (result, page_date)
             else:
