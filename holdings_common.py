@@ -140,12 +140,13 @@ def standardize_holdings_rows(rows):
             continue
         kind = json_row_quantity_kind(item_src)
         shares = normalize_equity_lots_raw(raw_s, kind)
+        w = _resolve_weight_pct(item_src)
+        shares = _adjust_lots_by_weight_hint(shares, w, raw_s, kind)
         if len(code) != 4 or not code.isdigit() or shares <= 0:
             continue
         if _is_garbage_code(code) or _is_garbage_name(name):
             continue
         item = {"code": code, "name": name, "shares": shares, "unit": "張"}
-        w = _resolve_weight_pct(item_src)
         if w is not None:
             item["weight_pct"] = w
         result.append(item)
@@ -208,6 +209,9 @@ def normalize_equity_lots_raw(raw_val, quantity_kind="auto"):
       - 'share': 輸入為股，整數除 1000（台股 1 張 = 1000 股）向下取整。
       - 'lot': 輸入已是張，不除。
       - 'auto': 無表頭／單位時的保守推測（大數多為股）。
+
+    pocket 表頭常寫「持有股數」，但儲存格可能是已換算成「張」的 11,657（非 11,657,000 股）；
+    若一律 //1000 會變成 11 張（2330 誤判）。大於 10 萬股才視為股數。
     """
     if raw_val is None:
         return 0
@@ -220,13 +224,37 @@ def normalize_equity_lots_raw(raw_val, quantity_kind="auto"):
     if quantity_kind == "lot":
         return v
     if quantity_kind == "share":
-        return v // 1000
+        if v >= 100_000:
+            return v // 1000
+        if v >= 10_000:
+            if v % 1000 == 0:
+                return v // 1000
+            return v
+        if v >= 1_000:
+            if v % 1000 == 0:
+                return v // 1000
+            return v
+        return max(1, v // 1000) if v >= 100 else v
     # --- auto ---
     if v >= 100_000:
         return v // 1000
     if v >= 10_000 and v % 1000 == 0:
         return v // 1000
     return v
+
+
+def _adjust_lots_by_weight_hint(shares, weight_pct, raw_val, quantity_kind):
+    """權重很低但張數異常大時，嘗試修正多一位數的千分位誤讀（如 66,190,000→66190 應為 6619）。"""
+    w = weight_pct or 0
+    if w <= 0 or w >= 5 or shares <= 25_000:
+        return shares
+    if quantity_kind not in ("share", "auto"):
+        return shares
+    if raw_val >= 10_000_000 and shares > 30_000:
+        alt = shares // 10
+        if 800 <= alt <= 20_000:
+            return alt
+    return shares
 
 
 def _parse_percent(text):
@@ -398,10 +426,10 @@ def _score_holdings_raw_list(lst):
     return n
 
 
-def extract_holdings_list_from_embedded_json(text):
+def extract_holdings_list_from_embedded_json(text, min_score=8):
     """從整段 HTML/JS 中，用 JSONDecoder 對齊 `"holdings": [` 後切出陣列，取「看起來最像真持股表」的一筆。
 
-    避免正則 `.*?` 誤匹配頁面上其他小型 JSON 或殘段。"""
+    避免正則 `.*?` 誤匹配頁面上其他小型 JSON 或殘段。min_score 可調低（如 5）供 requests 靜態 HTML。"""
     if not text:
         return None
     dec = json.JSONDecoder()
@@ -417,7 +445,7 @@ def extract_holdings_list_from_embedded_json(text):
         sc = _score_holdings_raw_list(data)
         if sc > best_sc:
             best_sc, best = sc, data
-    if best is not None and best_sc >= 8:
+    if best is not None and best_sc >= min_score:
         return best
     return None
 

@@ -5,9 +5,18 @@
 
 import os
 import time
+import warnings
 import requests
 from bs4 import BeautifulSoup
 import re
+
+if os.getenv("ETF_REQUESTS_VERIFY_SSL", "1").strip().lower() in ("0", "false", "no"):
+    try:
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    except Exception:
+        warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 
 from holdings_common import (
     _is_garbage_name,
@@ -76,6 +85,11 @@ def fetch_holdings_requests():
         if embedded:
             print(f"  從內嵌 JSON（\"holdings\" 陣列）擷取 {len(embedded)} 列（已避開正則誤匹配小段）")
             holdings = list(embedded)
+        else:
+            embedded_loose = extract_holdings_list_from_embedded_json(html, min_score=5)
+            if embedded_loose:
+                print(f"  從內嵌 JSON（寬鬆門檻）擷取 {len(embedded_loose)} 列")
+                holdings = list(embedded_loose)
 
         # 方法2: 解析持股明細表格（依表頭對應欄位，適用欄序調整）
         if not holdings:
