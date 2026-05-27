@@ -9,6 +9,30 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 
+_AGENT_DEBUG_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug-97ec5f.log")
+
+
+def _agent_log(hypothesis_id, location, message, data, run_id="pre-fix"):
+    # #region agent log
+    try:
+        from time import time
+
+        payload = {
+            "sessionId": "97ec5f",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time() * 1000),
+            "runId": run_id,
+        }
+        with open(_AGENT_DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+
+
 # 排除明顯非股票名稱的內容（CSS、HTML、版權等）
 def _is_garbage_name(name):
     if not name or len(name) > 30:
@@ -135,13 +159,37 @@ def standardize_holdings_rows(rows):
         code = str(item_src.get("code", item_src.get("stockCode", item_src.get("symbol", "")))).strip()
         name = str(item_src.get("name", item_src.get("stockName", item_src.get("stock_name", "")))).strip()
         try:
-            raw_s = int(item_src.get("shares", item_src.get("quantity", item_src.get("amount", 0))) or 0)
+            raw_s = int(
+                item_src.get("_raw_digits")
+                or item_src.get("shares_raw")
+                or item_src.get("shares", item_src.get("quantity", item_src.get("amount", 0)))
+                or 0
+            )
         except (ValueError, TypeError):
             continue
         kind = json_row_quantity_kind(item_src)
         shares = normalize_equity_lots_raw(raw_s, kind)
         w = _resolve_weight_pct(item_src)
+        shares_before_adj = shares
         shares = _adjust_lots_by_weight_hint(shares, w, raw_s, kind)
+        if code in ("2330", "2303"):
+            # #region agent log
+            _agent_log(
+                "H1",
+                "holdings_common.py:standardize_holdings_rows",
+                "normalize pipeline",
+                {
+                    "code": code,
+                    "raw_s": raw_s,
+                    "stored_shares_field": item_src.get("shares"),
+                    "has_raw_digits": "_raw_digits" in item_src,
+                    "kind": kind,
+                    "weight_pct": w,
+                    "shares_after_norm": shares_before_adj,
+                    "shares_after_adj": shares,
+                },
+            )
+            # #endregion
         if len(code) != 4 or not code.isdigit() or shares <= 0:
             continue
         if _is_garbage_code(code) or _is_garbage_name(name):
@@ -181,7 +229,11 @@ def validate_fetched_holdings(holdings):
         s = int(h.get("shares") or 0)
         w = _resolve_weight_pct(h) or 0.0
         if s > 35000 and 0 < w < 4.0:
-            return False, f"{code} 張數 {s} 與權重 {w:.2f}% 矛盾（疑為股數未換算或抓錯欄）"
+            err = f"{code} 張數 {s} 與權重 {w:.2f}% 矛盾（疑為股數未換算或抓錯欄）"
+            # #region agent log
+            _agent_log("H4", "holdings_common.py:validate_fetched_holdings", "validation failed", {"code": code, "shares": s, "weight": w})
+            # #endregion
+            return False, err
 
     suspicious = []
     for h in holdings:
@@ -199,7 +251,11 @@ def validate_fetched_holdings(holdings):
     if ones >= 6:
         return False, f"疑似股/張混用：{ones} 檔張數=1"
 
-    return True, f"OK {n} 檔；2330 {sh2330} 張 / {wt2330:.2f}%"
+    msg = f"OK {n} 檔；2330 {sh2330} 張 / {wt2330:.2f}%"
+    # #region agent log
+    _agent_log("H4", "holdings_common.py:validate_fetched_holdings", "validation passed", {"n": n, "msg": msg})
+    # #endregion
+    return True, msg
 
 
 def normalize_equity_lots_raw(raw_val, quantity_kind="auto"):
@@ -244,16 +300,27 @@ def normalize_equity_lots_raw(raw_val, quantity_kind="auto"):
 
 
 def _adjust_lots_by_weight_hint(shares, weight_pct, raw_val, quantity_kind):
-    """權重很低但張數異常大時，嘗試修正多一位數的千分位誤讀（如 66,190,000→66190 應為 6619）。"""
+    """權重很低但張數異常大時，嘗試修正多一位數的千分位誤讀（如 71,190,000→71190 應為 7119）。"""
     w = weight_pct or 0
     if w <= 0 or w >= 5 or shares <= 25_000:
         return shares
     if quantity_kind not in ("share", "auto"):
         return shares
+    alt = None
     if raw_val >= 10_000_000 and shares > 30_000:
         alt = shares // 10
-        if 800 <= alt <= 20_000:
-            return alt
+    elif shares > 35_000 and 0 < w < 4.0:
+        alt = shares // 10
+    if alt is not None and 800 <= alt <= 20_000:
+        # #region agent log
+        _agent_log(
+            "H1",
+            "holdings_common.py:_adjust_lots_by_weight_hint",
+            "applied weight hint correction",
+            {"raw_val": raw_val, "shares_in": shares, "shares_out": alt, "weight_pct": w, "kind": quantity_kind},
+        )
+        # #endregion
+        return alt
     return shares
 
 

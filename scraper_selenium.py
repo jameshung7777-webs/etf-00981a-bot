@@ -357,6 +357,7 @@ def fetch_holdings_selenium():
                                 "code": code,
                                 "name": name_text,
                                 "shares": shares,
+                                "_raw_digits": shares_raw,
                                 "unit": "張",
                                 "_quantity_kind": qk,
                             }
